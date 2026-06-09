@@ -92,6 +92,18 @@ class ApiFlowTest(SimpleTestCase):
         plot = res.json()
         self.assertEqual(plot["total_rows"], 6)
         self.assertLessEqual(plot["returned_rows"], 5)
+        self.assertEqual(len(plot["row_indices"]), plot["returned_rows"])
+        self.assertEqual(len(plot["rows"]), plot["returned_rows"])
+        self.assertIn("text", plot["metadata_columns"])
+
+        # audio stream for first plotted row
+        row_index = plot["row_indices"][0]
+        res = self.client.get(
+            "/api/audio/stream",
+            {"session_id": session_id, "row_index": row_index},
+        )
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertTrue(res["Content-Type"].startswith("audio/"))
 
         # 5: filter
         res = self.client.post(

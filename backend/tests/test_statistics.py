@@ -35,18 +35,25 @@ class StatisticsBuilderTest(unittest.TestCase):
         self.assertEqual(rows["b"]["max"], 50.0)
 
     def test_plot_data_first_strategy_limits(self):
-        payload = self.builder.plot_data(["a"], limit=3, strategy="first")
-        self.assertEqual(payload["a"], [1.0, 2.0, 3.0])
-        self.assertEqual(payload["__count__"], [5])
+        result = self.builder.plot_data(["a"], limit=3, strategy="first")
+        self.assertEqual(result.metric_data["a"], [1.0, 2.0, 3.0])
+        self.assertEqual(result.total_rows, 5)
 
     def test_plot_data_random_is_deterministic_with_seed(self):
         p1 = self.builder.plot_data(["a"], limit=3, strategy="random", seed=42)
         p2 = self.builder.plot_data(["a"], limit=3, strategy="random", seed=42)
-        self.assertEqual(p1["a"], p2["a"])
+        self.assertEqual(p1.metric_data["a"], p2.metric_data["a"])
 
     def test_plot_data_serialises_inf_as_none(self):
-        payload = self.builder.plot_data(["b"], limit=10, strategy="first")
-        self.assertIn(None, payload["b"])  # inf and nan both become None
+        result = self.builder.plot_data(["b"], limit=10, strategy="first")
+        self.assertIn(None, result.metric_data["b"])  # inf and nan both become None
+
+    def test_plot_data_includes_row_metadata(self):
+        result = self.builder.plot_data(["a"], limit=3, strategy="first")
+        self.assertEqual(result.row_indices, [0, 1, 2])
+        self.assertEqual(len(result.rows), 3)
+        self.assertIn("name", result.metadata_columns)
+        self.assertEqual(result.rows[0]["name"], "x")
 
 
 if __name__ == "__main__":
