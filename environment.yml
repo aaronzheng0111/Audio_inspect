@@ -1,0 +1,20 @@
+name: audio_visual_web
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - nodejs=20
+  - pip
+  - numpy
+  - pandas
+  - scipy
+  - librosa
+  - soundfile
+  - matplotlib
+  - pip:
+      - django==4.2.*
+      - djangorestframework==3.15.*
+      - django-cors-headers==4.*
+      - pyloudnorm==0.1.*
+      - reportlab==4.*

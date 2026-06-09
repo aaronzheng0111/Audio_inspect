@@ -1,0 +1,11 @@
+Django==4.2.16
+djangorestframework==3.15.2
+django-cors-headers==4.4.0
+numpy>=1.24
+pandas>=2.0
+scipy>=1.10
+librosa>=0.10
+soundfile>=0.12
+pyloudnorm>=0.1.1
+matplotlib>=3.7
+reportlab>=4.0
