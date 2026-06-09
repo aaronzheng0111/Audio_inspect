@@ -34,6 +34,25 @@ class AttributeMapperTest(unittest.TestCase):
         self.assertIn("audio_name_id", out.columns)
         self.assertEqual(out["audio_path"].iloc[0], "x.wav")
 
+    def test_repeat_map_is_idempotent(self):
+        """Re-submitting the same mapping after columns were renamed must not fail."""
+        df = pd.DataFrame({"path": ["a.wav"], "sentence": ["hello"]})
+        mapping = {"audio_path": "path", "text": "sentence"}
+        mapper = AttributeMapper(list(df.columns))
+        once = mapper.apply(df, mapping)
+        self.assertIn("text", once.columns)
+        again_mapper = AttributeMapper(list(once.columns))
+        twice = again_mapper.apply(once, mapping)
+        self.assertIn("text", twice.columns)
+        self.assertIn("audio_path", twice.columns)
+
+    def test_suggest_german_cv_columns(self):
+        cols = ["audio_name", "path", "sentence", "duration_s"]
+        suggestion = AttributeMapper(cols).suggest()
+        self.assertEqual(suggestion["audio_name_id"], "audio_name")
+        self.assertEqual(suggestion["text"], "sentence")
+        self.assertEqual(suggestion["audio_path"], "path")
+
 
 if __name__ == "__main__":
     unittest.main()
