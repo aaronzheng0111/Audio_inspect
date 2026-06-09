@@ -99,6 +99,9 @@ export const api = {
       .post("/export/report", { session_id: sessionId, rules })
       .then((r) => r.data)
       .catch((e) => Promise.reject(unwrapError(e))),
+
+  audioStreamUrl: (sessionId, rowIndex) =>
+    `/api/audio/stream?session_id=${encodeURIComponent(sessionId)}&row_index=${rowIndex}`,
 };
 
 export default api;

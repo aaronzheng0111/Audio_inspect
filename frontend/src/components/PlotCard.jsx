@@ -10,48 +10,60 @@ import {
   Stack,
 } from "@mui/material";
 import Plot from "react-plotly.js";
+import ScatterPointPanel from "./ScatterPointPanel.jsx";
+import { ChartSeriesBuilder } from "../models/ChartSeriesBuilder.js";
+import { PlotDataset } from "../models/PlotDataset.js";
 
-// A single chart card. Each numeric attribute gets its own card (Task 5). The
-// user can switch the chart type per card (histogram / scatter / bar / box).
 const CHART_TYPES = ["histogram", "box", "scatter", "bar"];
 
-export default function PlotCard({ column, values, index, xValues }) {
+export default function PlotCard({
+  column,
+  values,
+  index,
+  xValues,
+  sessionId,
+  rowIndices,
+  rows,
+  metadataColumns,
+}) {
   const [chartType, setChartType] = useState("histogram");
+  const [selectedSourceIndex, setSelectedSourceIndex] = useState(null);
 
-  const numeric = useMemo(
-    () => (values || []).filter((v) => v !== null && v !== undefined),
-    [values]
+  const dataset = useMemo(
+    () =>
+      new PlotDataset({
+        sessionId,
+        column,
+        values,
+        rowIndices,
+        rows,
+        metadataColumns,
+      }),
+    [sessionId, column, values, rowIndices, rows, metadataColumns]
   );
 
-  const data = useMemo(() => {
-    const color = "#1976d2";
-    switch (chartType) {
-      case "scatter":
-        return [
-          {
-            x: xValues || numeric.map((_, i) => i),
-            y: numeric,
-            type: "scattergl",
-            mode: "markers",
-            marker: { color, size: 5, opacity: 0.6 },
-          },
-        ];
-      case "bar":
-        return [
-          {
-            x: numeric.map((_, i) => i),
-            y: numeric,
-            type: "bar",
-            marker: { color },
-          },
-        ];
-      case "box":
-        return [{ y: numeric, type: "box", marker: { color }, boxpoints: "outliers" }];
-      case "histogram":
-      default:
-        return [{ x: numeric, type: "histogram", marker: { color }, nbinsx: 30 }];
-    }
-  }, [chartType, numeric, xValues]);
+  const chartData = useMemo(
+    () =>
+      new ChartSeriesBuilder(dataset).build(chartType, {
+        selectedSourceIndex,
+        xValues,
+      }),
+    [dataset, chartType, selectedSourceIndex, xValues]
+  );
+
+  const selectedPoint = dataset.pointAt(selectedSourceIndex);
+
+  const handlePlotClick = (event) => {
+    if (chartType !== "scatter" || !event?.points?.length) return;
+    const sourceIndex = event.points[0].customdata;
+    if (sourceIndex === undefined || sourceIndex === null) return;
+    setSelectedSourceIndex(sourceIndex);
+  };
+
+  const handleChartTypeChange = (nextType) => {
+    setChartType(nextType);
+    setSelectedSourceIndex(null);
+  };
 
   return (
     <Card sx={{ height: "100%" }}>
@@ -64,7 +76,7 @@ export default function PlotCard({ column, values, index, xValues }) {
             <Select
               label="Chart"
               value={chartType}
-              onChange={(e) => setChartType(e.target.value)}
+              onChange={(e) => handleChartTypeChange(e.target.value)}
             >
               {CHART_TYPES.map((t) => (
                 <MenuItem key={t} value={t}>
@@ -76,9 +88,9 @@ export default function PlotCard({ column, values, index, xValues }) {
         }
       />
       <CardContent>
-        <Stack>
+        <Stack spacing={2}>
           <Plot
-            data={data}
+            data={chartData}
             layout={{
               autosize: true,
               height: 280,
@@ -90,7 +102,9 @@ export default function PlotCard({ column, values, index, xValues }) {
             config={{ displayModeBar: false, responsive: true }}
             style={{ width: "100%" }}
             useResizeHandler
+            onClick={handlePlotClick}
           />
+          {chartType === "scatter" && <ScatterPointPanel point={selectedPoint} />}
         </Stack>
       </CardContent>
     </Card>

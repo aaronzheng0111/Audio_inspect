@@ -222,6 +222,10 @@ export default function AnalysisPage() {
               column={col}
               index={i}
               values={plot?.data?.[col] || []}
+              sessionId={sessionId}
+              rowIndices={plot?.row_indices || []}
+              rows={plot?.rows || []}
+              metadataColumns={plot?.metadata_columns || []}
             />
           </Grid>
         ))}
