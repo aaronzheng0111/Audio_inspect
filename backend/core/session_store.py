@@ -30,11 +30,18 @@ class Session:
     computed_metrics: List[str] = field(default_factory=list)
 
     def canonical_to_column(self, canonical: str) -> Optional[str]:
-        """Return the actual dataframe column bound to a canonical name."""
-        for original, target in self.column_mapping.items():
-            if target == canonical:
-                return original
-        return canonical if canonical in self.dataframe.columns else None
+        """Return the dataframe column to use for a canonical name.
+
+        After mapping, canonical names (``text``, ``audio_path``, …) are the
+        actual column labels. ``column_mapping`` stores canonical -> original
+        source column from the user's selection.
+        """
+        if canonical in self.dataframe.columns:
+            return canonical
+        source = self.column_mapping.get(canonical)
+        if source and source in self.dataframe.columns:
+            return source
+        return None
 
 
 class SessionStore:

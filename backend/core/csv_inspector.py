@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List
 
 import numpy as np
@@ -46,9 +47,17 @@ class CsvInspector:
     """Parse a CSV file and describe its structure."""
 
     def __init__(self, csv_path: str, sample_rows: int = DEFAULT_SAMPLE_ROWS) -> None:
-        self.csv_path = os.path.expanduser(csv_path.strip())
+        self.csv_path = self._normalize_path(csv_path)
         self.sample_rows = sample_rows
         self._dataframe: pd.DataFrame | None = None
+
+    @staticmethod
+    def _normalize_path(csv_path: str) -> str:
+        """Resolve user input to an absolute path (handles ~ and spaces)."""
+        raw = (csv_path or "").strip()
+        if not raw:
+            return ""
+        return str(Path(raw).expanduser().resolve())
 
     # -- loading ---------------------------------------------------------
     def load(self) -> pd.DataFrame:
@@ -56,14 +65,19 @@ class CsvInspector:
         if not self.csv_path:
             raise ValueError("CSV path must not be empty.")
         if not os.path.isfile(self.csv_path):
-            raise FileNotFoundError(f"CSV file not found: {self.csv_path}")
+            raise FileNotFoundError(
+                f"CSV file not found at: {self.csv_path!r}. "
+                "Check the path (spaces are OK) and that the file exists."
+            )
         try:
-            df = pd.read_csv(self.csv_path)
+            # low_memory=False avoids dtype chunk warnings on large mixed-type CSVs.
+            df = pd.read_csv(self.csv_path, low_memory=False)
         except Exception as exc:  # pragma: no cover - surfaced to the user
             raise ValueError(f"Failed to parse CSV: {exc}") from exc
         if df.empty:
             raise ValueError("CSV file contains no rows.")
-        df.columns = [str(c).strip() for c in df.columns]
+        # Strip whitespace and UTF-8 BOM from headers (some exports prefix \ufeff).
+        df.columns = [str(c).strip().lstrip("\ufeff") for c in df.columns]
         self._dataframe = df
         return df
 
