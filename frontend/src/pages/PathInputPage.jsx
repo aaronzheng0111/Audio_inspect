@@ -85,7 +85,7 @@ export default function PathInputPage() {
               disabled={!csvPath.trim() || loading}
               onClick={handleLoad}
             >
-              {loading ? "Loading…" : "Load dataset"}
+              {loading ? "Loading CSV (large files may take a minute)…" : "Load dataset"}
             </Button>
           </Stack>
         </CardContent>

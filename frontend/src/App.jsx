@@ -10,7 +10,9 @@ import AnalysisPage from "./pages/AnalysisPage.jsx";
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter
+      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+    >
       <AppBar position="sticky" color="default" elevation={1}>
         <Toolbar>
           <GraphicEqIcon color="primary" sx={{ mr: 1.5 }} />

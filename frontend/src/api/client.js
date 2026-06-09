@@ -11,12 +11,25 @@ const http = axios.create({
 
 // Normalise backend errors ({"error": "..."}) into thrown Error messages.
 function unwrapError(error) {
-  const detail =
-    error?.response?.data?.error ||
-    error?.response?.data?.detail ||
-    error?.message ||
-    "Unexpected error";
-  return new Error(detail);
+  if (!error?.response) {
+    const msg = error?.message || "Network error";
+    if (msg.includes("Network Error") || msg.includes("timeout")) {
+      return new Error(
+        "Cannot reach the backend API. Stop any old servers and restart with: bash start.sh"
+      );
+    }
+    return new Error(msg);
+  }
+  const status = error.response.status;
+  const body = error.response.data;
+  const detail = body?.error || body?.detail || error.message || "Unexpected error";
+  if (status === 404 && typeof detail === "string" && !detail.includes("session")) {
+    return new Error(
+      `${detail} — If you see a generic 404, restart with bash start.sh ` +
+        "(backend on port 9081, frontend on 9173 — run bash start.sh)."
+    );
+  }
+  return new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
 }
 
 export const api = {
