@@ -54,8 +54,8 @@ conda run -n audio_visual_web pip install -r backend/requirements.txt
 ./start.sh
 ```
 
-- Backend: <http://localhost:8000/api/>
-- Frontend: <http://localhost:5173/>
+- Backend: <http://localhost:9081/api/> (9xxx ports avoid conflicts with other local apps)
+- Frontend: <http://localhost:9173/>
 
 ## API overview
 
@@ -70,5 +70,17 @@ conda run -n audio_visual_web pip install -r backend/requirements.txt
 | `POST /api/analysis/filter` | 5 | Apply thresholds, return before/after counts |
 | `POST /api/export/csv` | 5 | Export filtered CSV |
 | `POST /api/export/report` | 5 | Export PDF comparison report |
+
+## Tests
+
+A backend test-suite lives in `backend/tests/` (synthetic-audio unit tests plus
+an end-to-end API flow). Run it inside the conda env:
+
+```bash
+cd backend
+conda run -n audio_visual_web python manage.py test tests
+```
+
+Current status: 43 tests, all passing.
 
 See `GENERATION_LOG.md` for a record of what was generated and fixed.
