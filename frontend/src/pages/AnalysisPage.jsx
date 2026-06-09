@@ -160,6 +160,20 @@ export default function AnalysisPage() {
         </Button>
       </Stack>
 
+      {computeResult.warning && (
+        <Alert severity="warning">
+          {computeResult.warning}
+          {computeResult.example_resolved_path && (
+            <>
+              <br />
+              <Typography component="span" variant="caption" sx={{ fontFamily: "'Roboto Mono', monospace" }}>
+                Example path: {computeResult.example_resolved_path}
+              </Typography>
+            </>
+          )}
+        </Alert>
+      )}
+
       {/* Sampling controls (Task 5: choose how many points to render) */}
       <Paper sx={{ p: 2, borderRadius: 3 }}>
         <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems="center">

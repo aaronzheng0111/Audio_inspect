@@ -29,6 +29,7 @@ export default function MetricSelectionPage() {
     setActiveStep,
   } = useWizard();
   const [estimate, setEstimate] = useState(null);
+  const [audioWarning, setAudioWarning] = useState("");
   const [error, setError] = useState("");
   const [computing, setComputing] = useState(false);
 
@@ -40,7 +41,10 @@ export default function MetricSelectionPage() {
     }
     api
       .estimate(sessionId, selectedMetrics)
-      .then(setEstimate)
+      .then((res) => {
+        setEstimate(res);
+        setAudioWarning(res.warning || "");
+      })
       .catch((e) => setError(e.message));
   }, [sessionId, selectedMetrics, navigate, setActiveStep]);
 
@@ -98,6 +102,20 @@ export default function MetricSelectionPage() {
                 </Stack>
               </CardContent>
             </Card>
+
+            {audioWarning && (
+              <Alert severity="warning">
+                {audioWarning}
+                {estimate?.example_resolved_path && (
+                  <>
+                    <br />
+                    <Typography component="span" variant="caption" sx={{ fontFamily: "'Roboto Mono', monospace" }}>
+                      Example: {estimate.example_resolved_path}
+                    </Typography>
+                  </>
+                )}
+              </Alert>
+            )}
 
             {computing && (
               <Box>
