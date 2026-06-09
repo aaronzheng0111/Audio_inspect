@@ -14,12 +14,13 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from core.attribute_mapper import ALIASES, AttributeMapper
+from core.audio_path_resolver import resolve_audio_file, resolve_audio_root
 from core.csv_inspector import REQUIRED_CANONICAL_COLUMNS, CsvInspector
 from core.filtering import DatasetFilter, FilterRule
 from core.metric_engine import MetricEngine
 from core.metrics import registry
 from core.report import ReportGenerator
-from core.session_store import session_store
+from core.session_store import Session, session_store
 from core.statistics import StatisticsBuilder
 
 from .serializers import (
@@ -32,6 +33,35 @@ from .serializers import (
 )
 
 _engine = MetricEngine()
+
+
+def _probe_audio(session: Session, audio_col: str) -> dict:
+    """Detect the best filesystem root for relative audio paths in this session."""
+    samples = session.dataframe[audio_col].tolist()
+    root, found, checked = resolve_audio_root(session.csv_path, samples)
+    session.audio_root = root
+    session.audio_probe = {"found": found, "checked": checked}
+    example = ""
+    if samples:
+        example = resolve_audio_file(samples[0], session.csv_path, root)
+    payload = {
+        "audio_root": root,
+        "audio_probe": session.audio_probe,
+        "example_resolved_path": example,
+    }
+    if checked and found == 0:
+        payload["warning"] = (
+            f"No audio files found on disk (checked {checked} sample paths). "
+            f"Resolved audio root: {root}. "
+            f"Example path tried: {example}. "
+            "Place the audio files there or fix the path column in your CSV."
+        )
+    elif checked and found < checked:
+        payload["warning"] = (
+            f"Only {found}/{checked} sample audio files were found under {root}. "
+            "Some rows may produce empty metrics."
+        )
+    return payload
 
 
 def _error(message: str, code: int = status.HTTP_400_BAD_REQUEST) -> Response:
@@ -92,11 +122,14 @@ def map_attributes(request):
     except ValueError as exc:
         return _error(str(exc))
     session.column_mapping = mapping
+    audio_col = session.canonical_to_column("audio_path") or "audio_path"
+    probe = _probe_audio(session, audio_col) if audio_col in session.dataframe.columns else {}
     return Response(
         {
             "session_id": session.session_id,
             "columns": list(session.dataframe.columns),
             "mapping": mapping,
+            **probe,
         }
     )
 
@@ -116,8 +149,12 @@ def estimate_metrics(request):
         registry.select(data["metrics"])
     except KeyError as exc:
         return _error(str(exc))
+    audio_col = session.canonical_to_column("audio_path") or "audio_path"
+    if audio_col not in session.dataframe.columns:
+        return _error("No 'audio_path' column mapped; cannot read audio files.")
+    probe = _probe_audio(session, audio_col)
     estimate = _engine.predict_time(len(session.dataframe), data["metrics"])
-    return Response(estimate.to_dict())
+    return Response({**estimate.to_dict(), **probe})
 
 
 @api_view(["POST"])
@@ -144,7 +181,9 @@ def compute_metrics(request):
     except KeyError as exc:
         return _error(str(exc))
 
-    base_dir = os.path.dirname(session.csv_path)
+    if not session.audio_root:
+        _probe_audio(session, audio_col)
+    base_dir = session.audio_root or os.path.dirname(session.csv_path)
     try:
         session.dataframe = _engine.compute(
             session.dataframe,
@@ -161,15 +200,26 @@ def compute_metrics(request):
     for m in metrics:
         col = session.dataframe[m.key]
         coverage[m.key] = int(col.notna().sum())
-    return Response(
-        {
-            "session_id": session.session_id,
-            "computed_metrics": session.computed_metrics,
-            "n_rows": int(len(session.dataframe)),
-            "valid_counts": coverage,
-            "approximate": [m.key for m in metrics if m.approximate],
-        }
-    )
+    total_valid = max(coverage.values()) if coverage else 0
+    probe = _probe_audio(session, audio_col)
+    response = {
+        "session_id": session.session_id,
+        "computed_metrics": session.computed_metrics,
+        "n_rows": int(len(session.dataframe)),
+        "valid_counts": coverage,
+        "approximate": [m.key for m in metrics if m.approximate],
+        "audio_root": base_dir,
+        "audio_probe": probe.get("audio_probe"),
+        "example_resolved_path": probe.get("example_resolved_path"),
+    }
+    if total_valid == 0:
+        response["warning"] = probe.get("warning") or (
+            "Metric computation finished but no audio files could be read. "
+            "Charts will be empty until the audio files are available on disk."
+        )
+    elif probe.get("warning"):
+        response["warning"] = probe["warning"]
+    return Response(response)
 
 
 @api_view(["GET"])

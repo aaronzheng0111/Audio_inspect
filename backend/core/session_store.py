@@ -28,6 +28,10 @@ class Session:
     selected_metrics: List[str] = field(default_factory=list)
     #: metric keys that have actually been computed into the dataframe
     computed_metrics: List[str] = field(default_factory=list)
+    #: filesystem root used to resolve relative ``audio_path`` values
+    audio_root: Optional[str] = None
+    #: result of probing sample audio paths (found, checked)
+    audio_probe: Optional[Dict[str, int]] = None
 
     def canonical_to_column(self, canonical: str) -> Optional[str]:
         """Return the dataframe column to use for a canonical name.

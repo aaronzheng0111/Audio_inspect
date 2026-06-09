@@ -43,10 +43,9 @@ class AudioLoader:
 
     def resolve(self, audio_path: str, base_dir: Optional[str] = None) -> str:
         """Resolve a possibly-relative audio path against ``base_dir``."""
-        path = os.path.expanduser(str(audio_path).strip())
-        if not os.path.isabs(path) and base_dir:
-            path = os.path.join(base_dir, path)
-        return path
+        from .audio_path_resolver import resolve_audio_file
+
+        return resolve_audio_file(audio_path, csv_path="", audio_root=base_dir)
 
     def load(self, audio_path: str, base_dir: Optional[str] = None) -> Tuple[np.ndarray, int]:
         """Return ``(waveform, sample_rate)`` as mono float64.
