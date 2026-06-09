@@ -18,8 +18,27 @@ BACKEND_DIR="$ROOT_DIR/backend"
 FRONTEND_DIR="$ROOT_DIR/frontend"
 CONDA_ENV="audio_visual_web"
 
-BACKEND_PORT=8000
-FRONTEND_PORT=5173
+# Ports in 9xxx range — avoids common 8000/8001/5173 conflicts with other local apps.
+BACKEND_PORT=9081
+FRONTEND_PORT=9173
+
+# Stop any stale listener on our dedicated ports (e.g. previous ./start.sh or test run).
+free_port() {
+  local port=$1
+  local pids
+  pids=$(lsof -t -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
+  if [[ -n "$pids" ]]; then
+    echo "[start.sh] Port $port busy (PID $pids) — stopping stale process..."
+    # shellcheck disable=SC2086
+    kill $pids 2>/dev/null || true
+    sleep 1
+    pids=$(lsof -t -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
+    if [[ -n "$pids" ]]; then
+      echo "[start.sh] ERROR: port $port still in use. Stop the other app or change BACKEND_PORT/FRONTEND_PORT in start.sh."
+      exit 1
+    fi
+  fi
+}
 
 cleanup() {
   echo ""
@@ -38,21 +57,45 @@ else
   echo "[start.sh] WARNING: conda not found, using current Python/Node on PATH."
 fi
 
+free_port "$BACKEND_PORT"
+free_port "$FRONTEND_PORT"
+
 echo "[start.sh] Starting Django backend on :$BACKEND_PORT ..."
 (
   cd "$BACKEND_DIR"
-  "${RUN_IN_ENV[@]}" python manage.py runserver "0.0.0.0:$BACKEND_PORT"
+  "${RUN_IN_ENV[@]}" python manage.py runserver "127.0.0.1:$BACKEND_PORT"
 ) &
 BACKEND_PID=$!
+
+# Wait until our Django API is actually reachable (avoids proxy 404 from wrong server).
+BACKEND_READY=0
+for _ in $(seq 1 30); do
+  if curl -sf "http://127.0.0.1:$BACKEND_PORT/api/metrics" >/dev/null 2>&1; then
+    echo "[start.sh] Backend API ready on :$BACKEND_PORT"
+    BACKEND_READY=1
+    break
+  fi
+  if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
+    echo "[start.sh] ERROR: Django backend exited before becoming ready."
+    exit 1
+  fi
+  sleep 0.5
+done
+if [[ "$BACKEND_READY" -ne 1 ]]; then
+  echo "[start.sh] ERROR: Backend did not respond on :$BACKEND_PORT within 15s."
+  exit 1
+fi
 
 echo "[start.sh] Preparing front-end ..."
 (
   cd "$FRONTEND_DIR"
+  export AUDIO_INSPECT_BACKEND_PORT="$BACKEND_PORT"
+  export AUDIO_INSPECT_FRONTEND_PORT="$FRONTEND_PORT"
   if [[ ! -d node_modules ]]; then
     echo "[start.sh] Installing front-end dependencies (npm install) ..."
     "${RUN_IN_ENV[@]}" npm install
   fi
-  echo "[start.sh] Starting Vite dev server on :$FRONTEND_PORT ..."
+  echo "[start.sh] Starting Vite dev server on :$FRONTEND_PORT (API -> :$BACKEND_PORT) ..."
   "${RUN_IN_ENV[@]}" npm run dev -- --port "$FRONTEND_PORT" --host
 ) &
 FRONTEND_PID=$!
