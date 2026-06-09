@@ -84,6 +84,12 @@ fixes applied along the way, as required by `Generater/04 Implement.md`.
   clears stale listeners on 9081/9173 before launch (fixes "port already in use").
   Paths with spaces (e.g. `German Audio Dataset/...`) are normalized via
   `Path.resolve()` in `CsvInspector`.
+- **Empty metrics / no graph data (Kaggle CSV)**: Relative paths like
+  `kaggle/archive/foo.wav` were joined against the CSV folder (`.../CSV/`) instead
+  of the dataset root (`.../German Audio Dataset/`). Added
+  `core/audio_path_resolver.py` to auto-detect the best audio root; estimate/map/compute
+  now return `audio_root`, `audio_probe`, and `warning` when files are missing.
+  Frontend shows warnings on the estimate and analysis pages.
 - **Map error "sentence does not exist"**: Re-submitting `/api/dataset/map` after
   columns were already renamed (`sentence` → `text`) failed because validation
   only looked for the original name. `AttributeMapper` is now idempotent;
