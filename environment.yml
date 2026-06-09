@@ -10,11 +10,11 @@ dependencies:
   - pandas
   - scipy
   - librosa
-  - soundfile
   - matplotlib
   - pip:
       - django==4.2.*
       - djangorestframework==3.15.*
       - django-cors-headers==4.*
+      - soundfile==0.12.*
       - pyloudnorm==0.1.*
       - reportlab==4.*
