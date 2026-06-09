@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 
 from django.conf import settings
+from django.http import FileResponse
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -20,6 +21,7 @@ from core.filtering import DatasetFilter, FilterRule
 from core.metric_engine import MetricEngine
 from core.metrics import registry
 from core.report import ReportGenerator
+from core.session_audio import SessionAudioError, SessionAudioStreamer
 from core.session_store import Session, session_store
 from core.statistics import StatisticsBuilder
 
@@ -259,19 +261,48 @@ def plot_data(request):
         columns = [c.strip() for c in columns_param.split(",") if c.strip()]
     else:
         columns = builder.numeric_columns()
-    payload = builder.plot_data(
+    result = builder.plot_data(
         columns, limit=data["limit"], strategy=data["strategy"]
     )
-    total = payload.pop("__count__", [len(session.dataframe)])[0]
     return Response(
         {
             "session_id": data["session_id"],
             "columns": columns,
-            "total_rows": total,
-            "returned_rows": len(next(iter(payload.values()), [])),
-            "data": payload,
+            "total_rows": result.total_rows,
+            "returned_rows": result.returned_rows,
+            "row_indices": result.row_indices,
+            "rows": result.rows,
+            "metadata_columns": result.metadata_columns,
+            "data": result.metric_data,
         }
     )
+
+
+@api_view(["GET"])
+def stream_audio(request):
+    """GET /api/audio/stream — serve one row's audio file for in-browser playback."""
+    session_id = request.query_params.get("session_id")
+    row_index = request.query_params.get("row_index")
+    if not session_id or row_index is None:
+        return _error("session_id and row_index are required.")
+    try:
+        row_pos = int(row_index)
+    except (TypeError, ValueError):
+        return _error("row_index must be an integer.")
+    try:
+        session = session_store.get(session_id)
+    except KeyError as exc:
+        return _error(str(exc), status.HTTP_404_NOT_FOUND)
+
+    try:
+        audio = SessionAudioStreamer(session).open_row(row_pos)
+    except SessionAudioError as exc:
+        return _error(str(exc), status.HTTP_404_NOT_FOUND)
+
+    response = FileResponse(audio.handle, content_type=audio.content_type)
+    response["Accept-Ranges"] = "bytes"
+    response["Cache-Control"] = "no-cache"
+    return response
 
 
 def _rules_from(data) -> list:

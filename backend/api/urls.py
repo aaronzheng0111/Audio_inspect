@@ -11,6 +11,7 @@ urlpatterns = [
     path("metrics/compute", views.compute_metrics),
     path("analysis/summary", views.analysis_summary),
     path("analysis/plot-data", views.plot_data),
+    path("audio/stream", views.stream_audio),
     path("analysis/filter", views.apply_filter),
     path("export/csv", views.export_csv),
     path("export/report", views.export_report),

@@ -19,7 +19,10 @@ ALIASES: Dict[str, List[str]] = {
         "audio_name_id", "id", "name", "audio_name", "utt_id", "utterance_id", "filename",
     ],
     "text": ["text", "transcript", "transcription", "sentence", "label", "content"],
-    "audio_path": ["audio_path", "path", "wav", "wav_path", "file", "filepath", "audio"],
+    "audio_path": [
+        "audio_path", "path", "sample_path", "original_path",
+        "wav", "wav_path", "file", "filepath", "audio",
+    ],
 }
 
 
