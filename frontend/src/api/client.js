@@ -102,6 +102,14 @@ export const api = {
 
   audioStreamUrl: (sessionId, rowIndex) =>
     `/api/audio/stream?session_id=${encodeURIComponent(sessionId)}&row_index=${rowIndex}`,
+
+  browseFilesystem: (dirPath) => {
+    const params = dirPath ? { path: dirPath } : {};
+    return http
+      .get("/filesystem/browse", { params })
+      .then((r) => r.data)
+      .catch((e) => Promise.reject(unwrapError(e)));
+  },
 };
 
 export default api;

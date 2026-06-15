@@ -6,15 +6,19 @@ import {
   Button,
   Card,
   CardContent,
+  InputAdornment,
   Stack,
   TextField,
   Typography,
 } from "@mui/material";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import api from "../api/client.js";
+import FileBrowserDialog from "../components/FileBrowserDialog.jsx";
 import { useWizard } from "../context/WizardContext.jsx";
 
-// Step 1 (Task 1): the user enters the path to the dataset CSV on disk.
+// Step 1 (Task 1): the user provides the path to the dataset CSV on disk.
+// They can either type it manually or click Browse to pick it from a
+// file-system navigator powered by the backend.
 export default function PathInputPage() {
   const navigate = useNavigate();
   const {
@@ -27,6 +31,7 @@ export default function PathInputPage() {
   } = useWizard();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [browserOpen, setBrowserOpen] = useState(false);
 
   useEffect(() => setActiveStep(0), [setActiveStep]);
 
@@ -44,6 +49,10 @@ export default function PathInputPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleFileSelected = (path) => {
+    setCsvPath(path);
   };
 
   return (
@@ -73,6 +82,17 @@ export default function PathInputPage() {
                 startAdornment: (
                   <FolderOpenIcon sx={{ mr: 1, color: "text.secondary" }} />
                 ),
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={() => setBrowserOpen(true)}
+                    >
+                      Browse
+                    </Button>
+                  </InputAdornment>
+                ),
                 sx: { fontFamily: "'Roboto Mono', monospace" },
               }}
             />
@@ -90,6 +110,12 @@ export default function PathInputPage() {
           </Stack>
         </CardContent>
       </Card>
+
+      <FileBrowserDialog
+        open={browserOpen}
+        onClose={() => setBrowserOpen(false)}
+        onSelect={handleFileSelected}
+      />
     </Box>
   );
 }
