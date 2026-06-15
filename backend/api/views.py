@@ -7,6 +7,7 @@ in-memory :data:`core.session_store.session_store` keyed by ``session_id``.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from django.conf import settings
 from django.http import FileResponse
@@ -378,3 +379,87 @@ def export_report(request):
             "after": int(len(after)),
         }
     )
+
+
+# -- filesystem browser ---------------------------------------------------
+
+_HOME = str(Path.home())
+
+#: CSV-friendly file extensions shown in the browser (case-insensitive).
+_CSV_EXTENSIONS = frozenset({".csv", ".tsv", ".txt"})
+
+
+def _visible_entries(path: str):
+    """Return (directories, files) under *path*, excluding dot-files."""
+    try:
+        names = os.listdir(path)
+    except PermissionError:
+        return [], []
+    dirs, files = [], []
+    for name in names:
+        if name.startswith("."):
+            continue
+        full = os.path.join(path, name)
+        try:
+            if os.path.isdir(full):
+                dirs.append(name)
+            elif os.path.isfile(full) and os.path.splitext(name)[1].lower() in _CSV_EXTENSIONS:
+                files.append(name)
+        except OSError:
+            continue
+    dirs.sort(key=str.lower)
+    files.sort(key=str.lower)
+    return dirs, files
+
+
+@api_view(["GET"])
+def browse_filesystem(request):
+    """GET /api/filesystem/browse — list directories and CSV files under a path.
+
+    Query params:
+        path (str, optional): directory to browse. Defaults to the user's home.
+
+    Returns:
+        {
+            "path": "<canonical absolute path>",
+            "parent": "<parent path or null>",
+            "roots": ["/home/user", "/", ...],   // only when path == home
+            "directories": [{"name": "...", "path": "..."}, ...],
+            "files": [{"name": "...", "path": "..."}, ...],
+        }
+    """
+    raw = (request.query_params.get("path") or "").strip()
+    target = str(Path(raw).expanduser().resolve()) if raw else _HOME
+
+    if not os.path.isdir(target):
+        return _error(f"Not a directory: {target}")
+
+    dirs, files = _visible_entries(target)
+    parent = str(Path(target).parent) if target != "/" and Path(target).parent != Path(target) else None
+
+    payload = {
+        "path": target,
+        "parent": parent,
+        "directories": [
+            {"name": d, "path": os.path.join(target, d)} for d in dirs
+        ],
+        "files": [
+            {"name": f, "path": os.path.join(target, f)} for f in files
+        ],
+    }
+
+    # On the initial request (no path given), also return common roots so the
+    # UI can offer quick-jump targets.
+    if not raw:
+        roots = [_HOME]
+        if os.path.exists("/Volumes"):
+            try:
+                for v in os.listdir("/Volumes"):
+                    vp = os.path.join("/Volumes", v)
+                    if os.path.isdir(vp) and not v.startswith("."):
+                        roots.append(vp)
+            except OSError:
+                pass
+        payload["roots"] = roots
+
+    return Response(payload)
