@@ -56,6 +56,13 @@ class ComputeTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             MetricEngine().compute(self.df.drop(columns=["audio_path"]), ["rms"])
 
+    def test_parallel_matches_serial(self):
+        engine = MetricEngine()
+        serial = engine.compute(self.df, ["rms", "zcr"], max_workers=1)
+        parallel = engine.compute(self.df, ["rms", "zcr"], max_workers=4)
+        pd.testing.assert_series_equal(serial["rms"], parallel["rms"])
+        pd.testing.assert_series_equal(serial["zcr"], parallel["zcr"])
+
 
 if __name__ == "__main__":
     unittest.main()
