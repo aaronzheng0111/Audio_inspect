@@ -60,6 +60,7 @@ class StatisticsBuilder:
             c
             for c in self.dataframe.columns
             if pd.api.types.is_numeric_dtype(self.dataframe[c])
+            and not pd.api.types.is_bool_dtype(self.dataframe[c])
         ]
 
     def summary(self, columns: Optional[List[str]] = None) -> List[Dict[str, Any]]:
@@ -67,7 +68,9 @@ class StatisticsBuilder:
         cols = columns or self.numeric_columns()
         rows: List[Dict[str, Any]] = []
         for col in cols:
-            series = pd.to_numeric(self.dataframe[col], errors="coerce")
+            series = pd.to_numeric(self.dataframe[col], errors="coerce").astype(
+                "float64"
+            )
             valid = series.replace([np.inf, -np.inf], np.nan).dropna()
             if valid.empty:
                 rows.append(self._empty_row(col))

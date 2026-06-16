@@ -236,11 +236,12 @@ def analysis_summary(request):
     except KeyError as exc:
         return _error(str(exc), status.HTTP_404_NOT_FOUND)
     builder = StatisticsBuilder(session.dataframe)
+    metric_cols = session.computed_metrics or None
     return Response(
         {
             "session_id": session_id,
             "numeric_columns": builder.numeric_columns(),
-            "summary": builder.summary(),
+            "summary": builder.summary(columns=metric_cols),
         }
     )
 
