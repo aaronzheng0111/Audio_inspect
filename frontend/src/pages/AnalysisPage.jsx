@@ -35,6 +35,7 @@ export default function AnalysisPage() {
     useWizard();
 
   const [summary, setSummary] = useState([]);
+  const [summaryLoading, setSummaryLoading] = useState(true);
   const [plot, setPlot] = useState(null);
   const [limit, setLimit] = useState(200);
   const [strategy, setStrategy] = useState("first");
@@ -50,20 +51,43 @@ export default function AnalysisPage() {
     [selectedMetrics, summary]
   );
 
+  // Min/max for filter sliders follow the currently rendered chart sample so
+  // bounds stay in sync when the user changes sample size or strategy.
+  const plotBounds = useMemo(() => {
+    const out = {};
+    if (!plot?.data) return out;
+    for (const col of metricColumns) {
+      const values = (plot.data[col] || []).filter(
+        (v) => v !== null && v !== undefined && Number.isFinite(Number(v))
+      );
+      if (values.length) {
+        out[col] = {
+          min: Math.min(...values),
+          max: Math.max(...values),
+        };
+      }
+    }
+    return out;
+  }, [plot, metricColumns]);
+
   const boundsFor = useCallback(
     (column) => {
+      if (plotBounds[column]) return plotBounds[column];
       const row = summary.find((s) => s.column === column);
-      return {
-        min: row?.min ?? 0,
-        max: row?.max ?? 1,
-      };
+      if (row?.min == null || row?.max == null) return null;
+      return { min: row.min, max: row.max };
     },
-    [summary]
+    [plotBounds, summary]
   );
 
   const loadSummary = useCallback(async () => {
-    const res = await api.summary(sessionId);
-    setSummary(res.summary);
+    setSummaryLoading(true);
+    try {
+      const res = await api.summary(sessionId);
+      setSummary(res.summary);
+    } finally {
+      setSummaryLoading(false);
+    }
   }, [sessionId]);
 
   const loadPlot = useCallback(async () => {
@@ -84,6 +108,30 @@ export default function AnalysisPage() {
   useEffect(() => {
     loadPlot().catch((e) => setError(e.message));
   }, [loadPlot]);
+
+  // Keep slider positions aligned with the visible sample when it changes.
+  useEffect(() => {
+    if (!plot?.data || Object.keys(plotBounds).length === 0) return;
+    setRules((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const col of metricColumns) {
+        const bounds = plotBounds[col];
+        if (!bounds) continue;
+        const existing = prev[col];
+        if (
+          !existing ||
+          existing.min !== bounds.min ||
+          existing.max !== bounds.max
+        ) {
+          next[col] = { column: col, min: bounds.min, max: bounds.max };
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+    setFilterResult(null);
+  }, [plot, plotBounds, metricColumns, limit, strategy]);
 
   const ruleList = () =>
     Object.values(rules).filter(
@@ -238,20 +286,44 @@ export default function AnalysisPage() {
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           Adjust thresholds per metric, then apply to see how many rows remain.
+          Slider ranges follow the currently displayed sample; filtering still
+          applies to the full dataset.
         </Typography>
+        {summaryLoading && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Loading statistics for filter bounds…
+          </Typography>
+        )}
         <Grid container spacing={2}>
-          {metricColumns.map((col) => (
-            <Grid item xs={12} sm={6} md={4} key={col}>
-              <Card variant="outlined">
-                <FilterSlider
-                  column={col}
-                  bounds={boundsFor(col)}
-                  value={rules[col]}
-                  onChange={(r) => setRules({ ...rules, [col]: r })}
-                />
-              </Card>
-            </Grid>
-          ))}
+          {metricColumns.map((col) => {
+            const bounds = boundsFor(col);
+            return (
+              <Grid item xs={12} sm={6} md={4} key={col}>
+                <Card variant="outlined">
+                  {bounds ? (
+                    <FilterSlider
+                      key={`${col}-${limit}-${strategy}-${bounds.min}-${bounds.max}`}
+                      column={col}
+                      bounds={bounds}
+                      value={rules[col]}
+                      onChange={(r) => setRules({ ...rules, [col]: r })}
+                    />
+                  ) : (
+                    <Box sx={{ px: 2, py: 2 }}>
+                      <Typography variant="body2" fontWeight={600} gutterBottom>
+                        {col}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {summaryLoading
+                          ? "Loading bounds…"
+                          : "Statistics unavailable for this metric."}
+                      </Typography>
+                    </Box>
+                  )}
+                </Card>
+              </Grid>
+            );
+          })}
         </Grid>
 
         <Stack direction="row" spacing={2} alignItems="center" sx={{ mt: 2 }}>
