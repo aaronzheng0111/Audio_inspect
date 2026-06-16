@@ -19,6 +19,7 @@ import {
   Typography,
 } from "@mui/material";
 import RestartAltIcon from "@mui/icons-material/RestartAlt";
+import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import DownloadIcon from "@mui/icons-material/Download";
 import PictureAsPdfIcon from "@mui/icons-material/PictureAsPdf";
 import PlotCard from "../components/PlotCard.jsx";
@@ -184,6 +185,11 @@ export default function AnalysisPage() {
     }
   };
 
+  const goBack = () => {
+    setActiveStep(3);
+    navigate("/metrics");
+  };
+
   const startOver = () => {
     reset();
     navigate("/");
@@ -209,9 +215,14 @@ export default function AnalysisPage() {
               : ""}
           </Typography>
         </Box>
-        <Button startIcon={<RestartAltIcon />} onClick={startOver}>
-          Start over
-        </Button>
+        <Stack direction="row" spacing={1}>
+          <Button startIcon={<ArrowBackIcon />} onClick={goBack}>
+            Back
+          </Button>
+          <Button startIcon={<RestartAltIcon />} onClick={startOver}>
+            Start over
+          </Button>
+        </Stack>
       </Stack>
 
       {computeResult.warning && (
