@@ -6,6 +6,7 @@ in-memory :data:`core.session_store.session_store` keyed by ``session_id``.
 """
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -257,7 +258,19 @@ def plot_data(request):
         session = session_store.get(data["session_id"])
     except KeyError as exc:
         return _error(str(exc), status.HTTP_404_NOT_FOUND)
-    builder = StatisticsBuilder(session.dataframe)
+    dataframe = session.dataframe
+    rules_raw = (data.get("rules") or "").strip()
+    if rules_raw:
+        try:
+            rules_payload = json.loads(rules_raw)
+        except json.JSONDecodeError:
+            return _error("rules must be a JSON array.")
+        if not isinstance(rules_payload, list):
+            return _error("rules must be a JSON array.")
+        rules = _rules_from({"rules": rules_payload})
+        if rules:
+            dataframe = DatasetFilter(dataframe).apply(rules)
+    builder = StatisticsBuilder(dataframe)
     columns_param = data.get("columns") or ""
     if columns_param:
         columns = [c.strip() for c in columns_param.split(",") if c.strip()]

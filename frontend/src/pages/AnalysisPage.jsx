@@ -40,6 +40,7 @@ export default function AnalysisPage() {
   const [limit, setLimit] = useState(200);
   const [strategy, setStrategy] = useState("first");
   const [rules, setRules] = useState({}); // column -> {column,min,max}
+  const [appliedRules, setAppliedRules] = useState([]);
   const [filterResult, setFilterResult] = useState(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -92,9 +93,15 @@ export default function AnalysisPage() {
 
   const loadPlot = useCallback(async () => {
     if (metricColumns.length === 0) return;
-    const res = await api.plotData(sessionId, metricColumns, limit, strategy);
+    const res = await api.plotData(
+      sessionId,
+      metricColumns,
+      limit,
+      strategy,
+      appliedRules
+    );
     setPlot(res);
-  }, [sessionId, metricColumns, limit, strategy]);
+  }, [sessionId, metricColumns, limit, strategy, appliedRules]);
 
   useEffect(() => {
     setActiveStep(4);
@@ -109,7 +116,7 @@ export default function AnalysisPage() {
     loadPlot().catch((e) => setError(e.message));
   }, [loadPlot]);
 
-  // Keep slider positions aligned with the visible sample when it changes.
+  // Initialise slider positions from the first plot sample (do not overwrite edits).
   useEffect(() => {
     if (!plot?.data || Object.keys(plotBounds).length === 0) return;
     setRules((prev) => {
@@ -117,20 +124,12 @@ export default function AnalysisPage() {
       let changed = false;
       for (const col of metricColumns) {
         const bounds = plotBounds[col];
-        if (!bounds) continue;
-        const existing = prev[col];
-        if (
-          !existing ||
-          existing.min !== bounds.min ||
-          existing.max !== bounds.max
-        ) {
-          next[col] = { column: col, min: bounds.min, max: bounds.max };
-          changed = true;
-        }
+        if (!bounds || prev[col]) continue;
+        next[col] = { column: col, min: bounds.min, max: bounds.max };
+        changed = true;
       }
       return changed ? next : prev;
     });
-    setFilterResult(null);
   }, [plot, plotBounds, metricColumns, limit, strategy]);
 
   const ruleList = () =>
@@ -141,11 +140,18 @@ export default function AnalysisPage() {
   const handleFilter = async () => {
     setError("");
     try {
-      const res = await api.filter(sessionId, ruleList());
+      const activeRules = ruleList();
+      const res = await api.filter(sessionId, activeRules);
       setFilterResult(res);
+      setAppliedRules(activeRules);
     } catch (e) {
       setError(e.message);
     }
+  };
+
+  const handleClearFilter = () => {
+    setAppliedRules([]);
+    setFilterResult(null);
   };
 
   const handleExportCsv = async () => {
@@ -253,7 +259,11 @@ export default function AnalysisPage() {
           </FormControl>
           {plot && (
             <Chip
-              label={`showing ${plot.returned_rows} of ${plot.total_rows}`}
+              label={
+                appliedRules.length
+                  ? `showing ${plot.returned_rows} of ${plot.total_rows} filtered`
+                  : `showing ${plot.returned_rows} of ${plot.total_rows}`
+              }
               variant="outlined"
             />
           )}
@@ -285,9 +295,8 @@ export default function AnalysisPage() {
           Filter rules
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Adjust thresholds per metric, then apply to see how many rows remain.
-          Slider ranges follow the currently displayed sample; filtering still
-          applies to the full dataset.
+          Adjust thresholds per metric, then apply to update the charts and see
+          how many rows remain in the full dataset.
         </Typography>
         {summaryLoading && (
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -330,6 +339,11 @@ export default function AnalysisPage() {
           <Button variant="contained" onClick={handleFilter}>
             Apply filter
           </Button>
+          {appliedRules.length > 0 && (
+            <Button variant="outlined" onClick={handleClearFilter}>
+              Clear filter
+            </Button>
+          )}
           {filterResult && (
             <Stack direction="row" spacing={1} alignItems="center">
               <Chip label={`before: ${filterResult.before}`} variant="outlined" />

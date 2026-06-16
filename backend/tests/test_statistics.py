@@ -34,6 +34,14 @@ class StatisticsBuilderTest(unittest.TestCase):
         self.assertEqual(rows["b"]["count"], 3)
         self.assertEqual(rows["b"]["max"], 50.0)
 
+    def test_summary_skips_boolean_columns(self):
+        df = pd.DataFrame({"flag": [True, False, True], "value": [1.0, 2.0, 3.0]})
+        builder = StatisticsBuilder(df)
+        self.assertEqual(builder.numeric_columns(), ["value"])
+        rows = {r["column"]: r for r in builder.summary()}
+        self.assertNotIn("flag", rows)
+        self.assertEqual(rows["value"]["median"], 2.0)
+
     def test_plot_data_first_strategy_limits(self):
         result = self.builder.plot_data(["a"], limit=3, strategy="first")
         self.assertEqual(result.metric_data["a"], [1.0, 2.0, 3.0])

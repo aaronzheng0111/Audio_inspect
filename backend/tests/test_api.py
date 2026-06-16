@@ -3,6 +3,7 @@
 Uses DRF's APIClient against the real views and core logic. No database is
 touched (state lives in the in-memory SessionStore), so SimpleTestCase is used.
 """
+import json
 import os
 import shutil
 
@@ -116,6 +117,19 @@ class ApiFlowTest(SimpleTestCase):
         )
         self.assertEqual(res.status_code, 200, res.content)
         self.assertEqual(res.json()["before"], 6)
+
+        # plot-data respects the same filter rules
+        res = self.client.get(
+            "/api/analysis/plot-data",
+            {
+                "session_id": session_id,
+                "columns": "rms",
+                "limit": 100,
+                "rules": json.dumps([{"column": "rms", "min": -200, "max": 0}]),
+            },
+        )
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertLessEqual(res.json()["total_rows"], 6)
 
         # 5: export CSV
         res = self.client.post(

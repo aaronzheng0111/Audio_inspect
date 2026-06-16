@@ -69,7 +69,7 @@ export const api = {
       .then((r) => r.data)
       .catch((e) => Promise.reject(unwrapError(e))),
 
-  plotData: (sessionId, columns, limit, strategy) =>
+  plotData: (sessionId, columns, limit, strategy, rules = []) =>
     http
       .get("/analysis/plot-data", {
         params: {
@@ -77,6 +77,7 @@ export const api = {
           columns: columns.join(","),
           limit,
           strategy,
+          ...(rules.length ? { rules: JSON.stringify(rules) } : {}),
         },
       })
       .then((r) => r.data)

@@ -45,6 +45,8 @@ class PlotDataSerializer(serializers.Serializer):
     columns = serializers.CharField(required=False, allow_blank=True)
     limit = serializers.IntegerField(required=False, default=200, min_value=1, max_value=5000)
     strategy = serializers.ChoiceField(choices=["first", "random"], required=False, default="first")
+    #: JSON array of {column, min?, max?} — when set, sample only rows passing all rules.
+    rules = serializers.CharField(required=False, allow_blank=True, default="")
 
 
 class FilterRuleSerializer(serializers.Serializer):
