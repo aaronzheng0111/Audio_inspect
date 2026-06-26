@@ -74,10 +74,23 @@ export default function MetricSelectionPage() {
                 Selected metrics
               </Typography>
               <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                {selectedMetrics.map((m) => (
-                  <Chip key={m} label={m} color="primary" variant="outlined" />
-                ))}
+                {selectedMetrics.map((m) => {
+                  const done = estimate?.skipped_metrics?.includes(m);
+                  return (
+                    <Chip
+                      key={m}
+                      label={done ? `${m} (computed)` : m}
+                      color={done ? "success" : "primary"}
+                      variant={done ? "filled" : "outlined"}
+                    />
+                  );
+                })}
               </Stack>
+              {estimate?.skipped_metrics?.length > 0 && (
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: "block" }}>
+                  Already in your CSV session — only new metrics will be computed.
+                </Typography>
+              )}
             </Box>
 
             <Card variant="outlined" sx={{ bgcolor: "rgba(25,118,210,0.04)" }}>
@@ -87,11 +100,19 @@ export default function MetricSelectionPage() {
                   {estimate ? (
                     <Box>
                       <Typography variant="h6">
-                        {estimate.estimated_human}
+                        {estimate.pending_metrics?.length
+                          ? estimate.estimated_human
+                          : "Already computed"}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
-                        Estimated to process {estimate.n_rows} files
-                        {" "}({estimate.estimated_seconds}s)
+                        {estimate.pending_metrics?.length ? (
+                          <>
+                            Will compute {estimate.pending_metrics.join(", ")} for{" "}
+                            {estimate.n_rows} files ({estimate.estimated_seconds}s)
+                          </>
+                        ) : (
+                          <>All selected metrics are already in the dataset.</>
+                        )}
                       </Typography>
                     </Box>
                   ) : (
@@ -143,7 +164,11 @@ export default function MetricSelectionPage() {
                 disabled={computing || !estimate}
                 onClick={handleCompute}
               >
-                {computing ? "Computing…" : "Compute metrics"}
+                {computing
+                  ? "Computing…"
+                  : estimate?.pending_metrics?.length
+                    ? "Compute new metrics"
+                    : "Continue to analysis"}
               </Button>
             </Stack>
           </Stack>

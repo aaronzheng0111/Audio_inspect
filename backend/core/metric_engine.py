@@ -88,6 +88,8 @@ class MetricEngine:
     # -- estimation ------------------------------------------------------
     def predict_time(self, n_rows: int, metric_keys: List[str]) -> TimeEstimate:
         """Estimate wall-clock seconds to compute ``metric_keys`` for n rows."""
+        if not metric_keys:
+            return TimeEstimate(n_rows=n_rows, metric_keys=[], seconds=0.0)
         metrics = registry.select(metric_keys)
         total_cost = sum(m.cost for m in metrics)
         per_file = (
@@ -127,6 +129,8 @@ class MetricEngine:
         metrics = registry.select(metric_keys)
         result = dataframe.copy()
         total = len(result)
+        if not metrics:
+            return result
         if total == 0:
             for m in metrics:
                 result[m.key] = pd.Series(dtype=float)

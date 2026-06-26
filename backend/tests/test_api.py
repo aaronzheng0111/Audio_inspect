@@ -76,6 +76,18 @@ class ApiFlowTest(SimpleTestCase):
         self.assertEqual(set(compute["computed_metrics"]), set(metrics))
         self.assertEqual(compute["valid_counts"]["rms"], 6)
 
+        # incremental: only compute newly selected metrics
+        res = self.client.post(
+            "/api/metrics/compute",
+            {"session_id": session_id, "metrics": metrics + ["lufs"]},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200, res.content)
+        incremental = res.json()
+        self.assertEqual(incremental["computed_now"], ["lufs"])
+        self.assertEqual(set(incremental["skipped_metrics"]), set(metrics))
+        self.assertEqual(set(incremental["computed_metrics"]), set(metrics + ["lufs"]))
+
         # 5: summary
         res = self.client.get(
             "/api/analysis/summary", {"session_id": session_id}
@@ -148,6 +160,59 @@ class ApiFlowTest(SimpleTestCase):
         )
         self.assertEqual(res.status_code, 200, res.content)
         self.assertTrue(os.path.isfile(res.json()["path"]))
+
+    def test_compute_writes_back_and_reload_detects_metrics(self):
+        """Metrics computed in one session should be present in the CSV on reload."""
+        # 1: load
+        res = self.client.post(
+            "/api/dataset/load", {"csv_path": self.csv_path}, format="json"
+        )
+        session_id = res.json()["session_id"]
+        self.assertEqual(res.json()["pre_computed_metrics"], [])
+
+        # 3: map
+        self.client.post(
+            "/api/dataset/map",
+            {"session_id": session_id,
+             "mapping": {"audio_path": "file", "text": "transcript", "audio_name_id": "utt"}},
+            format="json",
+        )
+
+        # 4: compute rms only
+        self.client.post(
+            "/api/metrics/compute",
+            {"session_id": session_id, "metrics": ["rms"]},
+            format="json",
+        )
+
+        # The CSV on disk should now contain the rms column.
+        import pandas as pd
+        df = pd.read_csv(self.csv_path)
+        self.assertIn("rms", df.columns)
+
+        # Reload: pre_computed_metrics should now list rms.
+        res2 = self.client.post(
+            "/api/dataset/load", {"csv_path": self.csv_path}, format="json"
+        )
+        self.assertEqual(res2.status_code, 200)
+        self.assertIn("rms", res2.json()["pre_computed_metrics"])
+
+        # A second compute should skip rms entirely.
+        sid2 = res2.json()["session_id"]
+        self.client.post(
+            "/api/dataset/map",
+            {"session_id": sid2,
+             "mapping": {"audio_path": "audio_path", "text": "text", "audio_name_id": "audio_name_id"}},
+            format="json",
+        )
+        res3 = self.client.post(
+            "/api/metrics/compute",
+            {"session_id": sid2, "metrics": ["rms"]},
+            format="json",
+        )
+        self.assertEqual(res3.status_code, 200)
+        self.assertEqual(res3.json()["computed_now"], [])
+        self.assertIn("rms", res3.json()["skipped_metrics"])
 
     def test_load_missing_file_returns_400(self):
         res = self.client.post(

@@ -63,6 +63,19 @@ class ComputeTest(unittest.TestCase):
         pd.testing.assert_series_equal(serial["rms"], parallel["rms"])
         pd.testing.assert_series_equal(serial["zcr"], parallel["zcr"])
 
+    def test_compute_adds_only_new_metrics(self):
+        engine = MetricEngine()
+        once = engine.compute(self.df, ["rms"])
+        rms_before = once["rms"].copy()
+        twice = engine.compute(once, ["zcr"])
+        pd.testing.assert_series_equal(twice["rms"], rms_before)
+        self.assertTrue(twice["zcr"].notna().all())
+
+    def test_predict_time_empty_metrics(self):
+        est = MetricEngine().predict_time(10, [])
+        self.assertEqual(est.seconds, 0.0)
+        self.assertEqual(est.metric_keys, [])
+
 
 if __name__ == "__main__":
     unittest.main()

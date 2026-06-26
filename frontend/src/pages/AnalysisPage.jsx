@@ -53,33 +53,13 @@ export default function AnalysisPage() {
     [selectedMetrics, summary]
   );
 
-  // Min/max for filter sliders follow the currently rendered chart sample so
-  // bounds stay in sync when the user changes sample size or strategy.
-  const plotBounds = useMemo(() => {
-    const out = {};
-    if (!plot?.data) return out;
-    for (const col of metricColumns) {
-      const values = (plot.data[col] || []).filter(
-        (v) => v !== null && v !== undefined && Number.isFinite(Number(v))
-      );
-      if (values.length) {
-        out[col] = {
-          min: Math.min(...values),
-          max: Math.max(...values),
-        };
-      }
-    }
-    return out;
-  }, [plot, metricColumns]);
-
   const boundsFor = useCallback(
     (column) => {
-      if (plotBounds[column]) return plotBounds[column];
       const row = summary.find((s) => s.column === column);
       if (row?.min == null || row?.max == null) return null;
       return { min: row.min, max: row.max };
     },
-    [plotBounds, summary]
+    [summary]
   );
 
   const loadSummary = useCallback(async () => {
@@ -117,21 +97,21 @@ export default function AnalysisPage() {
     loadPlot().catch((e) => setError(e.message));
   }, [loadPlot]);
 
-  // Initialise slider positions from the first plot sample (do not overwrite edits).
+  // Default slider positions to the full-dataset min/max once summary loads.
   useEffect(() => {
-    if (!plot?.data || Object.keys(plotBounds).length === 0) return;
+    if (!summary.length) return;
     setRules((prev) => {
       const next = { ...prev };
       let changed = false;
       for (const col of metricColumns) {
-        const bounds = plotBounds[col];
-        if (!bounds || prev[col]) continue;
-        next[col] = { column: col, min: bounds.min, max: bounds.max };
+        const row = summary.find((s) => s.column === col);
+        if (!row || row.min == null || row.max == null || prev[col]) continue;
+        next[col] = { column: col, min: row.min, max: row.max };
         changed = true;
       }
       return changed ? next : prev;
     });
-  }, [plot, plotBounds, metricColumns, limit, strategy]);
+  }, [summary, metricColumns]);
 
   const ruleList = () =>
     Object.values(rules).filter(
@@ -306,8 +286,9 @@ export default function AnalysisPage() {
           Filter rules
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Adjust thresholds per metric, then apply to update the charts and see
-          how many rows remain in the full dataset.
+          Slider ranges use the full-dataset min/max from the statistics summary.
+          Changing sample size only affects the charts above; apply filter to
+          update charts and see how many rows remain.
         </Typography>
         {summaryLoading && (
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -322,7 +303,6 @@ export default function AnalysisPage() {
                 <Card variant="outlined">
                   {bounds ? (
                     <FilterSlider
-                      key={`${col}-${limit}-${strategy}-${bounds.min}-${bounds.max}`}
                       column={col}
                       bounds={bounds}
                       value={rules[col]}

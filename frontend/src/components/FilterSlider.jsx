@@ -2,7 +2,7 @@ import { Box, Grid, Slider, Stack, TextField, Typography } from "@mui/material";
 
 // A min/max range control for one metric column. The user can drag the slider
 // or type exact values (Task 5: "slide bar and could type the value"). Bounds
-// come from the column's observed min/max in the current chart sample.
+// come from the column's full-dataset min/max in the statistics summary.
 export default function FilterSlider({ column, bounds, value, onChange }) {
   const { min, max } = bounds;
   const step = max > min ? (max - min) / 100 : 1;

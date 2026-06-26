@@ -25,8 +25,9 @@ export default function PlotCard({
   rowIndices,
   rows,
   metadataColumns,
+  defaultChartType = "scatter",
 }) {
-  const [chartType, setChartType] = useState("histogram");
+  const [chartType, setChartType] = useState(defaultChartType);
   const [selectedSourceIndex, setSelectedSourceIndex] = useState(null);
 
   const dataset = useMemo(

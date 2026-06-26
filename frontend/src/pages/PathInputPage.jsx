@@ -27,6 +27,7 @@ export default function PathInputPage() {
     setSessionId,
     setDatasetInfo,
     setMapping,
+    setSelectedMetrics,
     setActiveStep,
   } = useWizard();
   const [loading, setLoading] = useState(false);
@@ -43,6 +44,10 @@ export default function PathInputPage() {
       setSessionId(info.session_id);
       setDatasetInfo(info);
       setMapping(info.suggested_mapping || {});
+      // Pre-select any metrics already present in the CSV from a prior session.
+      if (info.pre_computed_metrics?.length) {
+        setSelectedMetrics(info.pre_computed_metrics);
+      }
       navigate("/preview");
     } catch (e) {
       setError(e.message);

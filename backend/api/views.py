@@ -39,6 +39,12 @@ from .serializers import (
 _engine = MetricEngine()
 
 
+def _pending_metrics(session: Session, requested: list) -> list:
+    """Metric keys requested but not yet computed into the session dataframe."""
+    done = set(session.computed_metrics or [])
+    return [m for m in requested if m not in done]
+
+
 def _probe_audio(session: Session, audio_col: str) -> dict:
     """Detect the best filesystem root for relative audio paths in this session."""
     samples = session.dataframe[audio_col].tolist()
@@ -92,6 +98,14 @@ def load_dataset(request):
         return _error(str(exc))
 
     session = session_store.create(inspector.csv_path, df)
+
+    # Detect metric columns already present in the CSV (written back from a
+    # previous session) so we never recompute them unnecessarily.
+    all_metric_keys = {m.key for m in registry.all()}
+    pre_computed = sorted(k for k in all_metric_keys if k in df.columns)
+    if pre_computed:
+        session.computed_metrics = pre_computed
+
     mapper = AttributeMapper(list(df.columns))
     return Response(
         {
@@ -103,6 +117,7 @@ def load_dataset(request):
             "required_columns": REQUIRED_CANONICAL_COLUMNS,
             "suggested_mapping": mapper.suggest(),
             "alias_hints": ALIASES,
+            "pre_computed_metrics": pre_computed,
         }
     )
 
@@ -157,8 +172,18 @@ def estimate_metrics(request):
     if audio_col not in session.dataframe.columns:
         return _error("No 'audio_path' column mapped; cannot read audio files.")
     probe = _probe_audio(session, audio_col)
-    estimate = _engine.predict_time(len(session.dataframe), data["metrics"])
-    return Response({**estimate.to_dict(), **probe})
+    pending = _pending_metrics(session, data["metrics"])
+    skipped = [m for m in data["metrics"] if m not in pending]
+    estimate = _engine.predict_time(len(session.dataframe), pending)
+    return Response(
+        {
+            **estimate.to_dict(),
+            **probe,
+            "pending_metrics": pending,
+            "skipped_metrics": skipped,
+            "computed_metrics": list(session.computed_metrics or []),
+        }
+    )
 
 
 @api_view(["POST"])
@@ -181,27 +206,44 @@ def compute_metrics(request):
             f"Dataset too large (> {settings.MAX_AUDIO_FILES} rows) for one run."
         )
     try:
-        metrics = registry.select(data["metrics"])
+        registry.select(data["metrics"])
     except KeyError as exc:
         return _error(str(exc))
+
+    requested = data["metrics"]
+    pending = _pending_metrics(session, requested)
+    skipped = [m for m in requested if m not in pending]
 
     if not session.audio_root:
         _probe_audio(session, audio_col)
     base_dir = session.audio_root or os.path.dirname(session.csv_path)
     try:
-        session.dataframe = _engine.compute(
-            session.dataframe,
-            data["metrics"],
-            audio_path_column=audio_col,
-            base_dir=base_dir,
-        )
+        if pending:
+            session.dataframe = _engine.compute(
+                session.dataframe,
+                pending,
+                audio_path_column=audio_col,
+                base_dir=base_dir,
+            )
     except ValueError as exc:
         return _error(str(exc))
-    session.computed_metrics = sorted(set(session.computed_metrics) | set(data["metrics"]))
+    if pending:
+        session.computed_metrics = sorted(
+            set(session.computed_metrics or []) | set(pending)
+        )
+        # Write the updated DataFrame back to the original CSV so that the next
+        # time this file is loaded, the computed columns are already present and
+        # won't be recomputed.
+        try:
+            session.dataframe.to_csv(session.csv_path, index=False)
+        except Exception:
+            pass  # non-fatal: in-memory session is still correct
+
+    all_metrics = registry.select(requested)
 
     # Report how many rows produced a valid value per metric.
     coverage = {}
-    for m in metrics:
+    for m in all_metrics:
         col = session.dataframe[m.key]
         coverage[m.key] = int(col.notna().sum())
     total_valid = max(coverage.values()) if coverage else 0
@@ -209,9 +251,11 @@ def compute_metrics(request):
     response = {
         "session_id": session.session_id,
         "computed_metrics": session.computed_metrics,
+        "computed_now": pending,
+        "skipped_metrics": skipped,
         "n_rows": int(len(session.dataframe)),
         "valid_counts": coverage,
-        "approximate": [m.key for m in metrics if m.approximate],
+        "approximate": [m.key for m in all_metrics if m.approximate],
         "audio_root": base_dir,
         "audio_probe": probe.get("audio_probe"),
         "example_resolved_path": probe.get("example_resolved_path"),

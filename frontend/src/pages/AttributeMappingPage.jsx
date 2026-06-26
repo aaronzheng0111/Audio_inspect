@@ -4,6 +4,7 @@ import {
   Alert,
   Box,
   Button,
+  Chip,
   Divider,
   Paper,
   Stack,
@@ -52,7 +53,8 @@ export default function AttributeMappingPage() {
       setError("Please map a column to 'audio_path' before continuing.");
       return;
     }
-    if (selectedMetrics.length === 0) {
+    const hasPreComputed = (datasetInfo?.pre_computed_metrics?.length ?? 0) > 0;
+    if (selectedMetrics.length === 0 && !hasPreComputed) {
       setError("Select at least one metric to generate.");
       return;
     }
@@ -88,6 +90,27 @@ export default function AttributeMappingPage() {
           Pick the acoustic quality metrics to compute from the audio files.
           Metrics flagged <b>approx</b> are approximations of complex measures.
         </Typography>
+
+        {datasetInfo?.pre_computed_metrics?.length > 0 && (
+          <Alert severity="success" sx={{ mb: 2 }}>
+            <strong>Metrics already in this CSV</strong> — these columns were
+            found in the file and will not be recomputed:&nbsp;
+            {datasetInfo.pre_computed_metrics.map((m) => (
+              <Chip
+                key={m}
+                label={m}
+                size="small"
+                color="success"
+                variant="outlined"
+                sx={{ mr: 0.5 }}
+              />
+            ))}
+            <Box component="span" sx={{ display: "block", mt: 0.5, fontSize: "0.8rem" }}>
+              Select additional metrics below to add more columns, or proceed directly.
+            </Box>
+          </Alert>
+        )}
+
         <Divider sx={{ mb: 2 }} />
         <MetricSelector
           metrics={metrics}
