@@ -128,6 +128,12 @@ class ComputeTest(unittest.TestCase):
         )
         pd.testing.assert_series_equal(a["rms"], b["rms"])
 
+    def test_subset_mask_limits_rows(self):
+        engine = MetricEngine()
+        mask = pd.Series([False, True, True, True, True, False], index=self.df.index)
+        out = engine.compute(self.df, ["rms"], subset_mask=mask)
+        self.assertEqual(int(out["rms"].notna().sum()), 4)
+
 
 if __name__ == "__main__":
     unittest.main()

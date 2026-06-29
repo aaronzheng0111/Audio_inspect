@@ -161,6 +161,12 @@ class ApiFlowTest(SimpleTestCase):
         self.assertEqual(res.status_code, 200, res.content)
         self.assertTrue(os.path.isfile(res.json()["path"]))
 
+        preview = self.client.get(
+            "/api/export/report/preview", {"session_id": session_id}
+        )
+        self.assertEqual(preview.status_code, 200, preview.content)
+        self.assertEqual(preview["Content-Type"], "application/pdf")
+
     def test_compute_writes_back_and_reload_detects_metrics(self):
         """Metrics computed in one session should be present in the CSV on reload."""
         # 1: load
@@ -213,6 +219,57 @@ class ApiFlowTest(SimpleTestCase):
         self.assertEqual(res3.status_code, 200)
         self.assertEqual(res3.json()["computed_now"], [])
         self.assertIn("rms", res3.json()["skipped_metrics"])
+
+    def test_export_queue_pipeline(self):
+        res = self.client.post(
+            "/api/dataset/load", {"csv_path": self.csv_path}, format="json"
+        )
+        session_id = res.json()["session_id"]
+        self.client.post(
+            "/api/dataset/map",
+            {
+                "session_id": session_id,
+                "mapping": {
+                    "audio_path": "file",
+                    "text": "transcript",
+                    "audio_name_id": "utt",
+                },
+            },
+            format="json",
+        )
+        self.client.post(
+            "/api/metrics/compute",
+            {"session_id": session_id, "metrics": ["rms"], "row_limit": 2},
+            format="json",
+        )
+        rules = [{"column": "rms", "min": -200, "max": 0}]
+        queued = self.client.post(
+            "/api/analysis/queue-export",
+            {"session_id": session_id, "rules": rules},
+            format="json",
+        )
+        self.assertEqual(queued.status_code, 200, queued.content)
+        body = queued.json()
+        self.assertTrue(body["queued"])
+        self.assertGreater(body["pending_compute_rows"], 0)
+        self.assertLess(body["filter"]["after"], 6)
+
+        computed = self.client.post(
+            "/api/analysis/compute-queued",
+            {"session_id": session_id, "rules": []},
+            format="json",
+        )
+        self.assertEqual(computed.status_code, 200, computed.content)
+        self.assertEqual(computed.json()["pending_compute_rows"], 0)
+
+        finalized = self.client.post(
+            "/api/export/finalize",
+            {"session_id": session_id, "rules": rules},
+            format="json",
+        )
+        self.assertEqual(finalized.status_code, 200, finalized.content)
+        self.assertTrue(os.path.isfile(finalized.json()["path"]))
+        self.assertEqual(finalized.json()["rows"], 6)
 
     def test_load_missing_file_returns_400(self):
         res = self.client.post(

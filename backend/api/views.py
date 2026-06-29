@@ -287,49 +287,18 @@ def compute_metrics(request):
 
     if not session.audio_root:
         _probe_audio(session, audio_col)
-    base_dir = session.audio_root or os.path.dirname(session.csv_path)
-
-    # Incrementally persist progress to the original CSV so that a long job on a
-    # large dataset survives interruptions: completed rows are written back in
-    # batches and can be resumed on a later run (already-computed rows are
-    # skipped). Throttle writes so we don't rewrite a huge CSV too often.
-    _BATCH_SIZE = 2000
-    _WRITE_EVERY = 10000
-    last_write = {"done": 0}
-
-    def _persist(df, done, total):
-        if done - last_write["done"] >= _WRITE_EVERY or done >= total:
-            last_write["done"] = done
-            try:
-                _atomic_write_csv(df, session.csv_path)
-            except Exception:
-                pass  # non-fatal: in-memory session is still correct
 
     try:
+        stats = {"compute_rows": 0, "pending_compute_rows": 0, "computed_rows": 0}
         if pending:
-            session.dataframe = _engine.compute(
-                session.dataframe,
+            stats = _run_compute_on_session(
+                session,
                 pending,
-                audio_path_column=audio_col,
-                base_dir=base_dir,
-                batch_size=_BATCH_SIZE,
-                on_batch=_persist,
-                resume=True,
                 row_limit=row_limit,
                 row_strategy=row_strategy,
             )
     except ValueError as exc:
         return _error(str(exc))
-    if pending:
-        session.computed_metrics = sorted(
-            set(session.computed_metrics or []) | set(pending)
-        )
-        # Final write-back to the original CSV so the computed columns are
-        # present next time this file is loaded.
-        try:
-            _atomic_write_csv(session.dataframe, session.csv_path)
-        except Exception:
-            pass  # non-fatal: in-memory session is still correct
 
     all_metrics = registry.select(requested)
 
@@ -340,6 +309,7 @@ def compute_metrics(request):
         coverage[m.key] = int(col.notna().sum())
     total_valid = max(coverage.values()) if coverage else 0
     probe = _probe_audio(session, audio_col)
+    base_dir = session.audio_root or os.path.dirname(session.csv_path)
     response = {
         "session_id": session.session_id,
         "computed_metrics": session.computed_metrics,
@@ -463,6 +433,95 @@ def _rules_from(data) -> list:
     return [FilterRule.from_dict(r) for r in data.get("rules", [])]
 
 
+def _session_metrics(session: Session) -> list:
+    return list(session.computed_metrics or [])
+
+
+def _pending_rows_mask(session: Session, metric_keys: list) -> pd.Series:
+    """True for rows missing at least one value in *metric_keys*."""
+    df = session.dataframe
+    cols = [m for m in metric_keys if m in df.columns]
+    if not cols:
+        return pd.Series(False, index=df.index)
+    return df[cols].isna().any(axis=1)
+
+
+def _export_queue_status(session: Session, rules: list) -> dict:
+    """Summarise the queued export filter and remaining metric work."""
+    metrics = _session_metrics(session)
+    flt = DatasetFilter(session.dataframe)
+    filter_summary = flt.summary(rules)
+    pending_mask = _pending_rows_mask(session, metrics)
+    pending_rows = int(pending_mask.sum())
+    return {
+        "metrics": metrics,
+        "pending_compute_rows": pending_rows,
+        "filter": filter_summary,
+    }
+
+
+def _run_compute_on_session(
+    session: Session,
+    metric_keys: list,
+    *,
+    row_limit: Optional[int] = None,
+    row_strategy: str = "first",
+    subset_mask: Optional[pd.Series] = None,
+) -> dict:
+    """Compute metrics into ``session.dataframe`` (in place) and persist CSV."""
+    audio_col = session.canonical_to_column("audio_path") or "audio_path"
+    if audio_col not in session.dataframe.columns:
+        raise ValueError("No 'audio_path' column mapped; cannot read audio files.")
+    if not metric_keys:
+        return {"compute_rows": 0, "pending_compute_rows": 0}
+    registry.select(metric_keys)
+    if not session.audio_root:
+        _probe_audio(session, audio_col)
+    base_dir = session.audio_root or os.path.dirname(session.csv_path)
+
+    _BATCH_SIZE = 2000
+    _WRITE_EVERY = 10000
+    last_write = {"done": 0}
+
+    def _persist(df, done, total):
+        if done - last_write["done"] >= _WRITE_EVERY or done >= total:
+            last_write["done"] = done
+            try:
+                _atomic_write_csv(df, session.csv_path)
+            except Exception:
+                pass
+
+    pending_before = int(_pending_rows_mask(session, metric_keys).sum())
+    compute_rows = pending_before
+    if row_limit is not None:
+        compute_rows = min(row_limit, pending_before)
+
+    session.dataframe = _engine.compute(
+        session.dataframe,
+        metric_keys,
+        audio_path_column=audio_col,
+        base_dir=base_dir,
+        batch_size=_BATCH_SIZE,
+        on_batch=_persist,
+        resume=True,
+        row_limit=row_limit,
+        row_strategy=row_strategy,
+        subset_mask=subset_mask,
+    )
+    session.computed_metrics = sorted(set(session.computed_metrics or []) | set(metric_keys))
+    try:
+        _atomic_write_csv(session.dataframe, session.csv_path)
+    except Exception:
+        pass
+
+    pending_after = int(_pending_rows_mask(session, metric_keys).sum())
+    return {
+        "compute_rows": compute_rows,
+        "pending_compute_rows": pending_after,
+        "computed_rows": pending_before - pending_after,
+    }
+
+
 @api_view(["POST"])
 def apply_filter(request):
     """POST /api/analysis/filter (Task 5)."""
@@ -479,6 +538,119 @@ def apply_filter(request):
 
 
 @api_view(["POST"])
+def queue_export(request):
+    """POST /api/analysis/queue-export — save filter rules for the export pipeline."""
+    serializer = FilterSerializer(data=request.data)
+    if not serializer.is_valid():
+        return _error(str(serializer.errors))
+    data = serializer.validated_data
+    try:
+        session = session_store.get(data["session_id"])
+    except KeyError as exc:
+        return _error(str(exc), status.HTTP_404_NOT_FOUND)
+    rules = _rules_from(data)
+    session.queued_export_rules = [
+        {"column": r.column, "min": r.min_value, "max": r.max_value} for r in rules
+    ]
+    status_payload = _export_queue_status(session, rules)
+    return Response(
+        {
+            "session_id": session.session_id,
+            "queued": True,
+            "rules": session.queued_export_rules,
+            **status_payload,
+        }
+    )
+
+
+@api_view(["POST"])
+def compute_queued(request):
+    """POST /api/analysis/compute-queued — fill missing metrics before export."""
+    serializer = FilterSerializer(data=request.data)
+    if not serializer.is_valid():
+        return _error(str(serializer.errors))
+    data = serializer.validated_data
+    try:
+        session = session_store.get(data["session_id"])
+    except KeyError as exc:
+        return _error(str(exc), status.HTTP_404_NOT_FOUND)
+    if not session.queued_export_rules:
+        return _error("Queue an export filter first (POST /api/analysis/queue-export).")
+    metrics = _session_metrics(session)
+    if not metrics:
+        return _error("No metrics have been computed for this session yet.")
+    rules = _rules_from({"rules": session.queued_export_rules})
+    pending_before = int(_pending_rows_mask(session, metrics).sum())
+    if pending_before == 0:
+        status_payload = _export_queue_status(session, rules)
+        return Response(
+            {
+                "session_id": session.session_id,
+                "message": "All rows already have metric values.",
+                "computed_rows": 0,
+                **status_payload,
+            }
+        )
+    try:
+        stats = _run_compute_on_session(session, metrics, row_limit=None)
+    except ValueError as exc:
+        return _error(str(exc))
+    status_payload = _export_queue_status(session, rules)
+    return Response(
+        {
+            "session_id": session.session_id,
+            **stats,
+            **status_payload,
+        }
+    )
+
+
+@api_view(["POST"])
+def finalize_export(request):
+    """POST /api/export/finalize — compute remaining metrics, then write filtered CSV."""
+    serializer = FilterSerializer(data=request.data)
+    if not serializer.is_valid():
+        return _error(str(serializer.errors))
+    data = serializer.validated_data
+    try:
+        session = session_store.get(data["session_id"])
+    except KeyError as exc:
+        return _error(str(exc), status.HTTP_404_NOT_FOUND)
+    rules_payload = data.get("rules") or session.queued_export_rules
+    if not rules_payload:
+        return _error("Queue an export filter first (POST /api/analysis/queue-export).")
+    rules = _rules_from({"rules": rules_payload})
+    session.queued_export_rules = [
+        {"column": r.column, "min": r.min_value, "max": r.max_value} for r in rules
+    ]
+    metrics = _session_metrics(session)
+    if not metrics:
+        return _error("No metrics have been computed for this session yet.")
+    compute_stats = {"computed_rows": 0, "pending_compute_rows": 0}
+    if int(_pending_rows_mask(session, metrics).sum()) > 0:
+        try:
+            compute_stats = _run_compute_on_session(session, metrics, row_limit=None)
+        except ValueError as exc:
+            return _error(str(exc))
+    filtered = DatasetFilter(session.dataframe).apply(rules)
+    out_path = os.path.join(
+        settings.WORKSPACE_DIR, f"filtered_{session.session_id}.csv"
+    )
+    filtered.to_csv(out_path, index=False)
+    filter_summary = DatasetFilter(session.dataframe).summary(rules)
+    return Response(
+        {
+            "session_id": session.session_id,
+            "path": out_path,
+            "rows": int(len(filtered)),
+            "rules": session.queued_export_rules,
+            **compute_stats,
+            "filter": filter_summary,
+        }
+    )
+
+
+@api_view(["POST"])
 def export_csv(request):
     """POST /api/export/csv (Task 5)."""
     serializer = FilterSerializer(data=request.data)
@@ -489,7 +661,9 @@ def export_csv(request):
         session = session_store.get(data["session_id"])
     except KeyError as exc:
         return _error(str(exc), status.HTTP_404_NOT_FOUND)
-    filtered = DatasetFilter(session.dataframe).apply(_rules_from(data))
+    rules_payload = data.get("rules") or session.queued_export_rules or []
+    rules = _rules_from({"rules": rules_payload})
+    filtered = DatasetFilter(session.dataframe).apply(rules)
     out_path = os.path.join(
         settings.WORKSPACE_DIR, f"filtered_{session.session_id}.csv"
     )
@@ -516,9 +690,7 @@ def export_report(request):
         return _error(str(exc), status.HTTP_404_NOT_FOUND)
     before = session.dataframe
     after = DatasetFilter(before).apply(_rules_from(data))
-    out_path = os.path.join(
-        settings.WORKSPACE_DIR, f"report_{session.session_id}.pdf"
-    )
+    out_path = _report_path(session.session_id)
     columns = session.computed_metrics or None
     try:
         ReportGenerator(before, after).generate(out_path, columns=columns)
@@ -532,6 +704,28 @@ def export_report(request):
             "after": int(len(after)),
         }
     )
+
+
+def _report_path(session_id: str) -> str:
+    return os.path.join(settings.WORKSPACE_DIR, f"report_{session_id}.pdf")
+
+
+@api_view(["GET"])
+def preview_report(request):
+    """GET /api/export/report/preview — inline PDF for in-browser preview."""
+    session_id = request.query_params.get("session_id")
+    if not session_id:
+        return _error("session_id is required.")
+    try:
+        session_store.get(session_id)
+    except KeyError as exc:
+        return _error(str(exc), status.HTTP_404_NOT_FOUND)
+    out_path = _report_path(session_id)
+    if not os.path.isfile(out_path):
+        return _error("Report not found. Export the PDF first.", status.HTTP_404_NOT_FOUND)
+    response = FileResponse(open(out_path, "rb"), content_type="application/pdf")
+    response["Content-Disposition"] = 'inline; filename="audio_inspect_report.pdf"'
+    return response
 
 
 # -- filesystem browser ---------------------------------------------------

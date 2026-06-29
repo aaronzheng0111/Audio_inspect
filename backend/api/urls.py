@@ -14,6 +14,10 @@ urlpatterns = [
     path("filesystem/browse", views.browse_filesystem),
     path("audio/stream", views.stream_audio),
     path("analysis/filter", views.apply_filter),
+    path("analysis/queue-export", views.queue_export),
+    path("analysis/compute-queued", views.compute_queued),
     path("export/csv", views.export_csv),
+    path("export/finalize", views.finalize_export),
     path("export/report", views.export_report),
+    path("export/report/preview", views.preview_report),
 ]

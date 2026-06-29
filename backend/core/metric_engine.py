@@ -124,6 +124,7 @@ class MetricEngine:
         row_limit: Optional[int] = None,
         row_strategy: str = "first",
         row_seed: int = 0,
+        subset_mask: Optional[pd.Series] = None,
     ) -> pd.DataFrame:
         """Compute metrics for each row, returning a new DataFrame with columns.
 
@@ -147,6 +148,8 @@ class MetricEngine:
           = all pending rows). Useful on large datasets to avoid long runs/OOM.
         * ``row_strategy`` — ``"first"`` or ``"random"`` when applying
           ``row_limit``.
+        * ``subset_mask`` — when set, only rows where this boolean Series is
+          True are eligible for computation (aligned to ``dataframe.index``).
         """
         if audio_path_column not in dataframe.columns:
             raise ValueError(
@@ -183,6 +186,10 @@ class MetricEngine:
             positions = [i for i, flag in enumerate(needs) if flag]
         else:
             positions = list(range(total))
+
+        if subset_mask is not None:
+            mask_values = subset_mask.reindex(result.index, fill_value=False).to_numpy()
+            positions = [i for i in positions if mask_values[i]]
 
         done = total - len(positions)  # already-complete rows count as progress
         if progress is not None and done:

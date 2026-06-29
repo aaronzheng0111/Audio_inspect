@@ -11,6 +11,7 @@ import {
   FormControl,
   Grid,
   InputLabel,
+  LinearProgress,
   MenuItem,
   Paper,
   Select,
@@ -22,6 +23,8 @@ import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import DownloadIcon from "@mui/icons-material/Download";
 import PictureAsPdfIcon from "@mui/icons-material/PictureAsPdf";
+import PlayArrowIcon from "@mui/icons-material/PlayArrow";
+import QueueIcon from "@mui/icons-material/Queue";
 import PlotCard from "../components/PlotCard.jsx";
 import FilterSlider from "../components/FilterSlider.jsx";
 import StatTable from "../components/StatTable.jsx";
@@ -46,6 +49,9 @@ export default function AnalysisPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [reportPreview, setReportPreview] = useState(null);
+  const [exportQueue, setExportQueue] = useState(null);
+  const [computeQueuedResult, setComputeQueuedResult] = useState(null);
 
   // Only chart the metrics the user computed (fall back to all numeric columns).
   const metricColumns = useMemo(
@@ -135,6 +141,56 @@ export default function AnalysisPage() {
     setFilterResult(null);
   };
 
+  const handleQueueExport = async () => {
+    setError("");
+    try {
+      const activeRules = ruleList();
+      const res = await api.queueExport(sessionId, activeRules);
+      setExportQueue(res);
+      setComputeQueuedResult(null);
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const handleComputeQueued = async () => {
+    setError("");
+    setMessage("");
+    setBusy(true);
+    try {
+      const res = await api.computeQueued(sessionId);
+      setComputeQueuedResult(res);
+      setExportQueue(res);
+      await loadSummary();
+      await loadPlot();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleFinalizeExport = async () => {
+    setError("");
+    setMessage("");
+    setBusy(true);
+    try {
+      const activeRules = ruleList();
+      const res = await api.finalizeExport(sessionId, activeRules);
+      setExportQueue(res);
+      setComputeQueuedResult(res);
+      setMessage(
+        `Filtered CSV written (${res.rows} rows, computed ${res.computed_rows ?? 0} remaining): ${res.path}`
+      );
+      await loadSummary();
+      await loadPlot();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleExportCsv = async () => {
     setError("");
     setMessage("");
@@ -152,12 +208,18 @@ export default function AnalysisPage() {
   const handleExportReport = async () => {
     setError("");
     setMessage("");
+    setReportPreview(null);
     setBusy(true);
     try {
       const res = await api.exportReport(sessionId, ruleList());
       setMessage(
-        `PDF report written (before ${res.before} / after ${res.after}): ${res.path}`
+        `PDF report ready (before ${res.before} / after ${res.after}). Saved to: ${res.path}`
       );
+      setReportPreview({
+        url: api.reportPreviewUrl(sessionId),
+        before: res.before,
+        after: res.after,
+      });
     } catch (e) {
       setError(e.message);
     } finally {
@@ -367,7 +429,12 @@ export default function AnalysisPage() {
       {/* Exports (Task 5) */}
       <Paper sx={{ p: 3, borderRadius: 3 }}>
         <Typography variant="h6" gutterBottom>
-          Export
+          Export pipeline
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Queue your filter rules, compute metrics for rows that are still empty,
+          then export a filtered CSV where every row has been evaluated against
+          your thresholds.
         </Typography>
         <Divider sx={{ mb: 2 }} />
         {message && (
@@ -375,17 +442,71 @@ export default function AnalysisPage() {
             {message}
           </Alert>
         )}
-        <Stack direction="row" spacing={2}>
+        {exportQueue && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            <Stack spacing={0.5}>
+              <Typography variant="body2">
+                Export queue active · {exportQueue.pending_compute_rows?.toLocaleString() ?? "?"}{" "}
+                rows still need metrics
+                {exportQueue.filter && (
+                  <>
+                    {" "}
+                    · filter passes {exportQueue.filter.after?.toLocaleString()} /{" "}
+                    {exportQueue.filter.before?.toLocaleString()} evaluated rows
+                  </>
+                )}
+              </Typography>
+              {computeQueuedResult?.computed_rows != null && (
+                <Typography variant="caption" color="text.secondary">
+                  Last compute filled {computeQueuedResult.computed_rows.toLocaleString()} rows
+                  ({computeQueuedResult.pending_compute_rows.toLocaleString()} still pending)
+                </Typography>
+              )}
+            </Stack>
+          </Alert>
+        )}
+        {busy && (
+          <Box sx={{ mb: 2 }}>
+            <LinearProgress />
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+              Computing remaining metrics… this may take a while on large datasets.
+            </Typography>
+          </Box>
+        )}
+        <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap>
           <Button
             variant="outlined"
-            startIcon={<DownloadIcon />}
+            startIcon={<QueueIcon />}
             disabled={busy}
-            onClick={handleExportCsv}
+            onClick={handleQueueExport}
           >
-            Export filtered CSV
+            Queue filter for export
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<PlayArrowIcon />}
+            disabled={busy || !exportQueue}
+            onClick={handleComputeQueued}
+          >
+            Compute remaining metrics
           </Button>
           <Button
             variant="contained"
+            startIcon={<DownloadIcon />}
+            disabled={busy}
+            onClick={handleFinalizeExport}
+          >
+            Compute & export CSV
+          </Button>
+          <Button
+            variant="text"
+            disabled={busy}
+            onClick={handleExportCsv}
+          >
+            Export CSV only (skip compute)
+          </Button>
+          <Button
+            variant="outlined"
             startIcon={<PictureAsPdfIcon />}
             disabled={busy}
             onClick={handleExportReport}
@@ -393,6 +514,43 @@ export default function AnalysisPage() {
             Export PDF report
           </Button>
         </Stack>
+        {reportPreview && (
+          <Box sx={{ mt: 3 }}>
+            <Stack
+              direction={{ xs: "column", sm: "row" }}
+              justifyContent="space-between"
+              alignItems={{ sm: "center" }}
+              spacing={1}
+              sx={{ mb: 1 }}
+            >
+              <Typography variant="subtitle2">
+                Report preview · before {reportPreview.before} / after{" "}
+                {reportPreview.after}
+              </Typography>
+              <Button
+                size="small"
+                href={reportPreview.url}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Open in new tab
+              </Button>
+            </Stack>
+            <Box
+              component="iframe"
+              src={reportPreview.url}
+              title="PDF report preview"
+              sx={{
+                width: "100%",
+                height: { xs: 480, md: 720 },
+                border: 1,
+                borderColor: "divider",
+                borderRadius: 2,
+                bgcolor: "background.paper",
+              }}
+            />
+          </Box>
+        )}
       </Paper>
     </Stack>
   );

@@ -10,7 +10,7 @@ from __future__ import annotations
 import threading
 import uuid
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -32,6 +32,8 @@ class Session:
     audio_root: Optional[str] = None
     #: result of probing sample audio paths (found, checked)
     audio_probe: Optional[Dict[str, int]] = None
+    #: filter rules queued for export (compute remaining metrics, then write CSV)
+    queued_export_rules: Optional[List[Dict[str, Any]]] = None
 
     def canonical_to_column(self, canonical: str) -> Optional[str]:
         """Return the dataframe column to use for a canonical name.

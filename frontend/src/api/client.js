@@ -109,6 +109,24 @@ export const api = {
       .then((r) => r.data)
       .catch((e) => Promise.reject(unwrapError(e))),
 
+  queueExport: (sessionId, rules) =>
+    http
+      .post("/analysis/queue-export", { session_id: sessionId, rules })
+      .then((r) => r.data)
+      .catch((e) => Promise.reject(unwrapError(e))),
+
+  computeQueued: (sessionId) =>
+    http
+      .post("/analysis/compute-queued", { session_id: sessionId, rules: [] })
+      .then((r) => r.data)
+      .catch((e) => Promise.reject(unwrapError(e))),
+
+  finalizeExport: (sessionId, rules) =>
+    http
+      .post("/export/finalize", { session_id: sessionId, rules })
+      .then((r) => r.data)
+      .catch((e) => Promise.reject(unwrapError(e))),
+
   exportCsv: (sessionId, rules) =>
     http
       .post("/export/csv", { session_id: sessionId, rules })
@@ -120,6 +138,9 @@ export const api = {
       .post("/export/report", { session_id: sessionId, rules })
       .then((r) => r.data)
       .catch((e) => Promise.reject(unwrapError(e))),
+
+  reportPreviewUrl: (sessionId) =>
+    `/api/export/report/preview?session_id=${encodeURIComponent(sessionId)}`,
 
   audioStreamUrl: (sessionId, rowIndex) =>
     `/api/audio/stream?session_id=${encodeURIComponent(sessionId)}&row_index=${rowIndex}`,
