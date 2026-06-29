@@ -60,12 +60,18 @@ class SessionAudioStreamer:
         return mimetypes.guess_type(path)[0] or "application/octet-stream"
 
     def resolve_row_path(self, row_pos: int) -> str:
-        if row_pos < 0 or row_pos >= len(self.session.dataframe):
+        df = self.session.dataframe
+        row_key = int(row_pos)
+        if row_key in df.index:
+            row = df.loc[row_key]
+        elif 0 <= row_key < len(df):
+            row = df.iloc[row_key]
+        else:
             raise SessionAudioError("row_index out of range.")
         audio_col = self.session.canonical_to_column("audio_path") or "audio_path"
-        if audio_col not in self.session.dataframe.columns:
+        if audio_col not in df.columns:
             raise SessionAudioError("No 'audio_path' column mapped; cannot read audio files.")
-        audio_path = self.session.dataframe.iloc[row_pos][audio_col]
+        audio_path = row[audio_col]
         if audio_path is None or (isinstance(audio_path, float) and pd.isna(audio_path)):
             raise SessionAudioError("No audio path for this row.")
         base_dir = self.session.audio_root or os.path.dirname(self.session.csv_path)

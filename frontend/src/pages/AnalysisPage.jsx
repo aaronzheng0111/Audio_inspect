@@ -190,6 +190,10 @@ export default function AnalysisPage() {
           <Typography variant="body2" color="text.secondary">
             {computeResult.n_rows} rows · metrics:{" "}
             {computeResult.computed_metrics.join(", ")}
+            {computeResult.compute_rows != null &&
+            computeResult.compute_rows < computeResult.n_rows
+              ? ` · computed this run: ${computeResult.compute_rows.toLocaleString()}`
+              : ""}
             {computeResult.approximate?.length
               ? ` · approx: ${computeResult.approximate.join(", ")}`
               : ""}

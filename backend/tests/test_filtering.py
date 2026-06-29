@@ -29,10 +29,18 @@ class DatasetFilterTest(unittest.TestCase):
 
     def test_summary_counts(self):
         summary = self.flt.summary([FilterRule("rms", min_value=-20.0)])
-        self.assertEqual(summary["before"], 5)
+        self.assertEqual(summary["total_rows"], 5)
+        self.assertEqual(summary["before"], 4)  # one NaN row not evaluated
         self.assertEqual(summary["after"], 3)
-        self.assertEqual(summary["removed"], 2)
-        self.assertAlmostEqual(summary["kept_ratio"], 0.6)
+        self.assertEqual(summary["removed"], 1)
+        self.assertEqual(summary["unevaluated"], 1)
+        self.assertAlmostEqual(summary["kept_ratio"], 0.75)
+
+    def test_summary_empty_rules(self):
+        summary = self.flt.summary([])
+        self.assertEqual(summary["before"], 5)
+        self.assertEqual(summary["after"], 5)
+        self.assertEqual(summary["unevaluated"], 0)
 
     def test_unknown_column_ignored(self):
         out = self.flt.apply([FilterRule("missing", min_value=0)])

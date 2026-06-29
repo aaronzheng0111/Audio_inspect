@@ -15,8 +15,8 @@ export default defineConfig({
       "/api": {
         target: `http://127.0.0.1:${BACKEND_PORT}`,
         changeOrigin: true,
-        timeout: 600_000,
-        proxyTimeout: 600_000,
+        timeout: 7_200_000,
+        proxyTimeout: 7_200_000,
       },
     },
   },

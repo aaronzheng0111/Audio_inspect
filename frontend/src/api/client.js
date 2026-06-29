@@ -23,6 +23,16 @@ function unwrapError(error) {
   const status = error.response.status;
   const body = error.response.data;
   const detail = body?.error || body?.detail || error.message || "Unexpected error";
+  if (
+    status === 404 &&
+    typeof detail === "string" &&
+    detail.includes("Unknown session_id")
+  ) {
+    return new Error(
+      "Your working session expired (the backend restarted and cleared in-memory state). " +
+        "Go back to step 1 and load your CSV again."
+    );
+  }
   if (status === 404 && typeof detail === "string" && !detail.includes("session")) {
     return new Error(
       `${detail} — If you see a generic 404, restart with bash start.sh ` +
@@ -51,15 +61,25 @@ export const api = {
       .then((r) => r.data)
       .catch((e) => Promise.reject(unwrapError(e))),
 
-  estimate: (sessionId, metrics) =>
+  estimate: (sessionId, metrics, { rowLimit = null, rowStrategy = "first" } = {}) =>
     http
-      .post("/metrics/estimate", { session_id: sessionId, metrics })
+      .post("/metrics/estimate", {
+        session_id: sessionId,
+        metrics,
+        row_limit: rowLimit,
+        row_strategy: rowStrategy,
+      })
       .then((r) => r.data)
       .catch((e) => Promise.reject(unwrapError(e))),
 
-  compute: (sessionId, metrics) =>
+  compute: (sessionId, metrics, { rowLimit = null, rowStrategy = "first" } = {}) =>
     http
-      .post("/metrics/compute", { session_id: sessionId, metrics })
+      .post("/metrics/compute", {
+        session_id: sessionId,
+        metrics,
+        row_limit: rowLimit,
+        row_strategy: rowStrategy,
+      })
       .then((r) => r.data)
       .catch((e) => Promise.reject(unwrapError(e))),
 

@@ -44,9 +44,14 @@ export default function PathInputPage() {
       setSessionId(info.session_id);
       setDatasetInfo(info);
       setMapping(info.suggested_mapping || {});
-      // Pre-select any metrics already present in the CSV from a prior session.
-      if (info.pre_computed_metrics?.length) {
-        setSelectedMetrics(info.pre_computed_metrics);
+      // Pre-select metrics already present in the CSV from a prior session
+      // (fully computed) plus any partially-computed ones so they can resume.
+      const prior = [
+        ...(info.pre_computed_metrics || []),
+        ...(info.partial_metrics || []),
+      ];
+      if (prior.length) {
+        setSelectedMetrics([...new Set(prior)]);
       }
       navigate("/preview");
     } catch (e) {

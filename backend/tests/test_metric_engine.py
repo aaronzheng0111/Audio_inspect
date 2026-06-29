@@ -76,6 +76,58 @@ class ComputeTest(unittest.TestCase):
         self.assertEqual(est.seconds, 0.0)
         self.assertEqual(est.metric_keys, [])
 
+    def test_resume_only_fills_missing_rows(self):
+        engine = MetricEngine()
+        full = engine.compute(self.df, ["rms"])
+        # Simulate a partially-finished run: blank out rms for the last 3 rows.
+        partial = full.copy()
+        partial.loc[partial.index[-3:], "rms"] = float("nan")
+        preserved = partial["rms"].iloc[:-3].tolist()
+
+        resumed = engine.compute(partial, ["rms"], resume=True)
+        # Previously-computed rows are untouched; missing rows are filled.
+        self.assertEqual(resumed["rms"].iloc[:-3].tolist(), preserved)
+        self.assertTrue(resumed["rms"].notna().all())
+
+    def test_resume_noop_when_complete(self):
+        engine = MetricEngine()
+        full = engine.compute(self.df, ["rms"])
+        calls = []
+        again = engine.compute(
+            full, ["rms"], resume=True, progress=lambda d, t: calls.append((d, t))
+        )
+        pd.testing.assert_series_equal(again["rms"], full["rms"])
+
+    def test_on_batch_invoked_with_partial_progress(self):
+        engine = MetricEngine()
+        seen = []
+        engine.compute(
+            self.df,
+            ["rms"],
+            batch_size=2,
+            on_batch=lambda df, done, total: seen.append((done, total)),
+        )
+        self.assertTrue(seen)
+        # Last callback reports completion of all rows.
+        self.assertEqual(seen[-1], (len(self.df), len(self.df)))
+        # Batches of 2 over 6 rows -> progress reported at 2, 4, 6.
+        self.assertEqual([d for d, _ in seen], [2, 4, 6])
+
+    def test_row_limit_caps_processed_rows(self):
+        engine = MetricEngine()
+        out = engine.compute(self.df, ["rms"], row_limit=3, row_strategy="first")
+        self.assertEqual(int(out["rms"].notna().sum()), 3)
+
+    def test_row_limit_random_is_deterministic(self):
+        engine = MetricEngine()
+        a = engine.compute(
+            self.df, ["rms"], row_limit=3, row_strategy="random", row_seed=7
+        )
+        b = engine.compute(
+            self.df, ["rms"], row_limit=3, row_strategy="random", row_seed=7
+        )
+        pd.testing.assert_series_equal(a["rms"], b["rms"])
+
 
 if __name__ == "__main__":
     unittest.main()

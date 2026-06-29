@@ -143,7 +143,10 @@ class StatisticsBuilder:
         return out
 
     def _row_positions(self, sample: pd.DataFrame) -> List[int]:
-        return [int(self.dataframe.index.get_loc(label)) for label in sample.index]
+        # Use the dataframe index label (stable row id in the session), not the
+        # iloc position inside a filtered subset — audio/stream looks up rows by
+        # this id in the full session dataframe.
+        return [int(label) for label in sample.index]
 
     def _ordered_metadata_columns(self, columns: List[str]) -> List[str]:
         def priority(col: str) -> tuple:

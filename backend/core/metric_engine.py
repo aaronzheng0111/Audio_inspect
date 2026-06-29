@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 
 from .audio_loader import AudioLoader, AudioLoadError
@@ -38,7 +39,13 @@ class TimeEstimate:
 
 
 def _default_max_workers() -> int:
-    return min(32, (os.cpu_count() or 1) + 4)
+    # Serial by default: several audio decoders (notably the MP3 path via
+    # librosa/audioread/soundfile) are NOT thread-safe and crash the whole
+    # process with a native SIGBUS when decoding concurrently. Serial decoding
+    # is also fast in practice (~0.02s/row), so correctness wins over a small
+    # speed-up. Callers can still opt into parallelism via ``max_workers`` for
+    # datasets known to use thread-safe codecs (e.g. WAV).
+    return 1
 
 
 def _compute_row(
@@ -111,6 +118,12 @@ class MetricEngine:
         base_dir: Optional[str] = None,
         progress: Optional[Callable[[int, int], None]] = None,
         max_workers: Optional[int] = None,
+        batch_size: Optional[int] = None,
+        on_batch: Optional[Callable[[pd.DataFrame, int, int], None]] = None,
+        resume: bool = False,
+        row_limit: Optional[int] = None,
+        row_strategy: str = "first",
+        row_seed: int = 0,
     ) -> pd.DataFrame:
         """Compute metrics for each row, returning a new DataFrame with columns.
 
@@ -118,30 +131,80 @@ class MetricEngine:
         the rest of the dataset still processes. ``progress(done, total)`` is
         invoked after each row when provided.
 
-        Rows are processed in parallel via a thread pool (I/O-bound audio
-        decode benefits most). Each worker uses its own :class:`AudioLoader` so
-        the LRU cache stays thread-safe.
+        Audio is decoded serially by default because several decoders (the MP3
+        path in particular) are not thread-safe; pass ``max_workers > 1`` only
+        for datasets known to use thread-safe codecs.
+
+        Large datasets can be processed incrementally:
+
+        * ``batch_size`` — process rows in chunks of this many; after each chunk
+          ``on_batch(result, done, total)`` is invoked so callers can persist
+          partial progress (e.g. write the CSV back to disk).
+        * ``resume`` — when True, rows that already have a value for *every*
+          requested metric are skipped, so an interrupted run can continue where
+          it left off instead of recomputing everything.
+        * ``row_limit`` — cap how many pending rows to process this run (``None``
+          = all pending rows). Useful on large datasets to avoid long runs/OOM.
+        * ``row_strategy`` — ``"first"`` or ``"random"`` when applying
+          ``row_limit``.
         """
         if audio_path_column not in dataframe.columns:
             raise ValueError(
                 f"audio path column {audio_path_column!r} not found in dataset."
             )
         metrics = registry.select(metric_keys)
-        result = dataframe.copy()
+        # Mutate in place — avoid copying a 100k-row DataFrame (saves ~500 MB+).
+        result = dataframe
         total = len(result)
         if not metrics:
             return result
         if total == 0:
             for m in metrics:
-                result[m.key] = pd.Series(dtype=float)
+                if m.key not in result.columns:
+                    result[m.key] = pd.Series(dtype=float)
             return result
 
-        workers = max_workers if max_workers is not None else _default_max_workers()
-        workers = max(1, min(workers, total))
+        # Ensure every requested metric has a numeric column we can fill in
+        # place. Existing columns are coerced to float so partial results from a
+        # prior run are preserved (and resumable).
+        for m in metrics:
+            if m.key not in result.columns:
+                result[m.key] = np.nan
+            else:
+                result[m.key] = pd.to_numeric(result[m.key], errors="coerce")
 
-        indices = list(result.index)
+        metric_cols = [m.key for m in metrics]
+        col_loc = {key: result.columns.get_loc(key) for key in metric_cols}
         audio_paths = result[audio_path_column].tolist()
-        row_values: Dict[object, Dict[str, float]] = {}
+
+        # Decide which row positions still need computing.
+        if resume:
+            needs = result[metric_cols].isna().any(axis=1).to_numpy()
+            positions = [i for i, flag in enumerate(needs) if flag]
+        else:
+            positions = list(range(total))
+
+        done = total - len(positions)  # already-complete rows count as progress
+        if progress is not None and done:
+            progress(done, total)
+        if not positions:
+            return result
+
+        if row_limit is not None and row_limit > 0 and len(positions) > row_limit:
+            if row_strategy == "random":
+                rng = np.random.default_rng(row_seed)
+                pick = rng.choice(len(positions), size=row_limit, replace=False)
+                positions = sorted(positions[i] for i in pick)
+            else:
+                positions = positions[:row_limit]
+
+        workers = max_workers if max_workers is not None else _default_max_workers()
+        workers = max(1, min(workers, len(positions)))
+        bs = batch_size if batch_size and batch_size > 0 else len(positions)
+
+        def _store(pos: int, values: Dict[str, float]) -> None:
+            for key in metric_cols:
+                result.iat[pos, col_loc[key]] = values[key]
 
         thread_local = threading.local()
 
@@ -150,36 +213,33 @@ class MetricEngine:
             if loader is None:
                 loader = AudioLoader(
                     target_sr=self.audio_loader.target_sr,
-                    cache_size=self.audio_loader.cache_size,
+                    cache_size=1,
                 )
                 thread_local.loader = loader
             return loader
 
         def _task(pos: int) -> Tuple[int, Dict[str, float]]:
-            values = _compute_row(
-                audio_paths[pos],
-                metrics,
-                base_dir,
-                _loader_for_thread(),
+            return pos, _compute_row(
+                audio_paths[pos], metrics, base_dir, _loader_for_thread()
             )
-            return pos, values
 
-        if workers == 1:
-            for pos in range(total):
-                _, values = _task(pos)
-                row_values[indices[pos]] = values
-                if progress is not None:
-                    progress(pos + 1, total)
-        else:
-            # map() batches submissions (chunksize) so large datasets do not
-            # queue one Future per row in memory at once.
-            chunksize = max(1, total // (workers * 4))
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                for pos, values in pool.map(_task, range(total), chunksize=chunksize):
-                    row_values[indices[pos]] = values
+        for start in range(0, len(positions), bs):
+            chunk = positions[start : start + bs]
+            if workers == 1:
+                loader = self.audio_loader
+                for pos in chunk:
+                    _store(pos, _compute_row(audio_paths[pos], metrics, base_dir, loader))
+                    done += 1
                     if progress is not None:
-                        progress(pos + 1, total)
+                        progress(done, total)
+            else:
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    for pos, values in pool.map(_task, chunk):
+                        _store(pos, values)
+                        done += 1
+                        if progress is not None:
+                            progress(done, total)
+            if on_batch is not None:
+                on_batch(result, done, total)
 
-        for m in metrics:
-            result[m.key] = [row_values[idx][m.key] for idx in indices]
         return result

@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
+from typing import Optional
 
+import pandas as pd
 from django.conf import settings
 from django.http import FileResponse
 from rest_framework import status
@@ -45,9 +48,58 @@ def _pending_metrics(session: Session, requested: list) -> list:
     return [m for m in requested if m not in done]
 
 
-def _probe_audio(session: Session, audio_col: str) -> dict:
+def _pending_row_count(session: Session, pending_metrics: list) -> int:
+    """How many rows still need values for at least one pending metric."""
+    if not pending_metrics:
+        return 0
+    df = session.dataframe
+    cols = [m for m in pending_metrics if m in df.columns]
+    if not cols:
+        return len(df)
+    return int(df[cols].isna().any(axis=1).sum())
+
+
+def _effective_row_limit(
+    session: Session, pending_metrics: list, row_limit: Optional[int]
+) -> int:
+    """Rows that will be processed this run (respecting optional cap)."""
+    pending_rows = _pending_row_count(session, pending_metrics)
+    if row_limit is None:
+        return pending_rows
+    return min(row_limit, pending_rows)
+
+
+def _atomic_write_csv(dataframe, csv_path: str) -> None:
+    """Write a DataFrame to ``csv_path`` atomically (temp file + rename).
+
+    Writing to a temp file in the same directory and then renaming avoids
+    leaving a half-written / corrupt CSV if the process is interrupted mid-write
+    (important for long incremental jobs).
+    """
+    directory = os.path.dirname(csv_path) or "."
+    fd, tmp_path = tempfile.mkstemp(suffix=".csv", dir=directory)
+    try:
+        with os.fdopen(fd, "w", newline="") as handle:
+            dataframe.to_csv(handle, index=False)
+        os.replace(tmp_path, csv_path)
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def _probe_audio(session: Session, audio_col: str, max_samples: int = 25) -> dict:
     """Detect the best filesystem root for relative audio paths in this session."""
-    samples = session.dataframe[audio_col].tolist()
+    series = session.dataframe[audio_col]
+    n = len(series)
+    if n <= max_samples:
+        samples = series.tolist()
+    else:
+        # Avoid materialising millions of path strings on huge datasets.
+        step = max(1, n // max_samples)
+        samples = series.iloc[::step].head(max_samples).tolist()
     root, found, checked = resolve_audio_root(session.csv_path, samples)
     session.audio_root = root
     session.audio_probe = {"found": found, "checked": checked}
@@ -100,9 +152,17 @@ def load_dataset(request):
     session = session_store.create(inspector.csv_path, df)
 
     # Detect metric columns already present in the CSV (written back from a
-    # previous session) so we never recompute them unnecessarily.
+    # previous session) so we never recompute them unnecessarily. A column only
+    # counts as fully computed if it exists AND has no missing values; a column
+    # with NaNs is a partially-finished run and will be resumed (only the
+    # missing rows recomputed) rather than skipped.
     all_metric_keys = {m.key for m in registry.all()}
-    pre_computed = sorted(k for k in all_metric_keys if k in df.columns)
+    present = [k for k in all_metric_keys if k in df.columns]
+    pre_computed = sorted(
+        k for k in present
+        if not pd.to_numeric(df[k], errors="coerce").isna().any()
+    )
+    partial_metrics = sorted(set(present) - set(pre_computed))
     if pre_computed:
         session.computed_metrics = pre_computed
 
@@ -118,6 +178,7 @@ def load_dataset(request):
             "suggested_mapping": mapper.suggest(),
             "alias_hints": ALIASES,
             "pre_computed_metrics": pre_computed,
+            "partial_metrics": partial_metrics,
         }
     )
 
@@ -174,7 +235,9 @@ def estimate_metrics(request):
     probe = _probe_audio(session, audio_col)
     pending = _pending_metrics(session, data["metrics"])
     skipped = [m for m in data["metrics"] if m not in pending]
-    estimate = _engine.predict_time(len(session.dataframe), pending)
+    row_limit = data.get("row_limit")
+    compute_rows = _effective_row_limit(session, pending, row_limit)
+    estimate = _engine.predict_time(compute_rows, pending)
     return Response(
         {
             **estimate.to_dict(),
@@ -182,6 +245,11 @@ def estimate_metrics(request):
             "pending_metrics": pending,
             "skipped_metrics": skipped,
             "computed_metrics": list(session.computed_metrics or []),
+            "total_rows": int(len(session.dataframe)),
+            "pending_rows": _pending_row_count(session, pending),
+            "compute_rows": compute_rows,
+            "row_limit": row_limit,
+            "row_strategy": data.get("row_strategy", "first"),
         }
     )
 
@@ -213,10 +281,30 @@ def compute_metrics(request):
     requested = data["metrics"]
     pending = _pending_metrics(session, requested)
     skipped = [m for m in requested if m not in pending]
+    row_limit = data.get("row_limit")
+    row_strategy = data.get("row_strategy", "first")
+    compute_rows = _effective_row_limit(session, pending, row_limit)
 
     if not session.audio_root:
         _probe_audio(session, audio_col)
     base_dir = session.audio_root or os.path.dirname(session.csv_path)
+
+    # Incrementally persist progress to the original CSV so that a long job on a
+    # large dataset survives interruptions: completed rows are written back in
+    # batches and can be resumed on a later run (already-computed rows are
+    # skipped). Throttle writes so we don't rewrite a huge CSV too often.
+    _BATCH_SIZE = 2000
+    _WRITE_EVERY = 10000
+    last_write = {"done": 0}
+
+    def _persist(df, done, total):
+        if done - last_write["done"] >= _WRITE_EVERY or done >= total:
+            last_write["done"] = done
+            try:
+                _atomic_write_csv(df, session.csv_path)
+            except Exception:
+                pass  # non-fatal: in-memory session is still correct
+
     try:
         if pending:
             session.dataframe = _engine.compute(
@@ -224,6 +312,11 @@ def compute_metrics(request):
                 pending,
                 audio_path_column=audio_col,
                 base_dir=base_dir,
+                batch_size=_BATCH_SIZE,
+                on_batch=_persist,
+                resume=True,
+                row_limit=row_limit,
+                row_strategy=row_strategy,
             )
     except ValueError as exc:
         return _error(str(exc))
@@ -231,11 +324,10 @@ def compute_metrics(request):
         session.computed_metrics = sorted(
             set(session.computed_metrics or []) | set(pending)
         )
-        # Write the updated DataFrame back to the original CSV so that the next
-        # time this file is loaded, the computed columns are already present and
-        # won't be recomputed.
+        # Final write-back to the original CSV so the computed columns are
+        # present next time this file is loaded.
         try:
-            session.dataframe.to_csv(session.csv_path, index=False)
+            _atomic_write_csv(session.dataframe, session.csv_path)
         except Exception:
             pass  # non-fatal: in-memory session is still correct
 
@@ -254,6 +346,9 @@ def compute_metrics(request):
         "computed_now": pending,
         "skipped_metrics": skipped,
         "n_rows": int(len(session.dataframe)),
+        "compute_rows": compute_rows,
+        "row_limit": row_limit,
+        "row_strategy": row_strategy,
         "valid_counts": coverage,
         "approximate": [m.key for m in all_metrics if m.approximate],
         "audio_root": base_dir,

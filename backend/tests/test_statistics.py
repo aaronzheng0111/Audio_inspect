@@ -63,6 +63,13 @@ class StatisticsBuilderTest(unittest.TestCase):
         self.assertIn("name", result.metadata_columns)
         self.assertEqual(result.rows[0]["name"], "x")
 
+    def test_row_indices_preserve_parent_index_after_filter(self):
+        filtered = self.df[self.df["a"] >= 3.0]
+        builder = StatisticsBuilder(filtered)
+        result = builder.plot_data(["a"], limit=2, strategy="first")
+        # Parent rows 2 and 3 — not iloc 0 and 1 inside the filtered subset.
+        self.assertEqual(result.row_indices, [2, 3])
+
 
 if __name__ == "__main__":
     unittest.main()

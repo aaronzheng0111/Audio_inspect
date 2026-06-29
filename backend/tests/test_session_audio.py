@@ -7,6 +7,7 @@ from django.test import SimpleTestCase
 
 from core.session_audio import SessionAudioError, SessionAudioStreamer
 from core.session_store import Session
+from core.statistics import StatisticsBuilder
 from tests.utils import build_dataset
 
 
@@ -33,6 +34,19 @@ class SessionAudioStreamerTest(SimpleTestCase):
         self.assertTrue(audio.content_type.startswith("audio/"))
         self.assertTrue(audio.handle.read(4))
         audio.close()
+
+    def test_resolve_row_path_uses_index_label_not_subset_iloc(self):
+        import pandas as pd
+
+        df = pd.read_csv(self.csv_path).rename(
+            columns={"file": "audio_path", "transcript": "text", "utt": "audio_name_id"}
+        )
+        self.session.dataframe = df
+        filtered = df.iloc[1:3]
+        positions = StatisticsBuilder(filtered).plot_data(["audio_path"], limit=2).row_indices
+        self.assertEqual(positions, [1, 2])
+        streamer = SessionAudioStreamer(self.session)
+        self.assertTrue(os.path.isfile(streamer.resolve_row_path(positions[0])))
 
     def test_invalid_row_raises(self):
         with self.assertRaises(SessionAudioError):

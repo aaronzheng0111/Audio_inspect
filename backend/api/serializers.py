@@ -29,6 +29,10 @@ class EstimateSerializer(serializers.Serializer):
 
     session_id = serializers.CharField()
     metrics = serializers.ListField(child=serializers.CharField(), allow_empty=False)
+    row_limit = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    row_strategy = serializers.ChoiceField(
+        choices=["first", "random"], required=False, default="first"
+    )
 
 
 class ComputeSerializer(serializers.Serializer):
@@ -36,6 +40,10 @@ class ComputeSerializer(serializers.Serializer):
 
     session_id = serializers.CharField()
     metrics = serializers.ListField(child=serializers.CharField(), allow_empty=False)
+    row_limit = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    row_strategy = serializers.ChoiceField(
+        choices=["first", "random"], required=False, default="first"
+    )
 
 
 class PlotDataSerializer(serializers.Serializer):
